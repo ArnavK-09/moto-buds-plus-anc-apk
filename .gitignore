@@ -1,0 +1,8 @@
+.toolchain/
+build/
+*.apk
+*.keystore
+*.jks
+*.log
+*.zip
+.DS_Store
