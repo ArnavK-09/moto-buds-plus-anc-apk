@@ -1,11 +1,10 @@
 .toolchain/
 build/
 node_modules/
-package-lock.json
 *.apk
 *.keystore
 *.jks
 *.log
 *.zip
-.DS_Store
 *.idsig
+.DS_Store

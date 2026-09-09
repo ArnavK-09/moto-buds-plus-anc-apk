@@ -7,6 +7,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.graphics.drawable.GradientDrawable;
@@ -46,10 +47,12 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
     private TextView[] ancLabels = new TextView[4];
 
     private BudsConnection connection;
+    private SharedPreferences prefs;
     private int currentAnc = BudsProtocol.ANC_OFF;
     private boolean isConnected = false;
     private boolean isSynced = false;
     private boolean requestedEnable = false;
+    private int case100Count = 0;
     private final BroadcastReceiver btStateReceiver = new BtStateReceiver(this);
 
     private static class BtStateReceiver extends BroadcastReceiver {
@@ -84,6 +87,8 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
         ScrollView scroll = new ScrollView(this);
         scroll.addView(root);
         setContentView(scroll);
+        prefs = getSharedPreferences("buds", Context.MODE_PRIVATE);
+        loadBattery();
         connection = new BudsConnection(this, this);
         checkPermission();
     }
@@ -99,7 +104,6 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
     protected void onPause() {
         super.onPause();
         try { unregisterReceiver(btStateReceiver); } catch (Exception ignored) {}
-        if (connection != null) connection.stop();
     }
 
     @Override
@@ -215,15 +219,21 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
         isConnected = false;
         isSynced = false;
         updateStatus(false);
+        updateBattery(new BudsProtocol.Battery(0, false, false), new BudsProtocol.Battery(0, false, false), new BudsProtocol.Battery(0, false, false));
     }
 
     @Override
     public void onBattery(BudsProtocol.Battery left, BudsProtocol.Battery right, BudsProtocol.Battery caseBattery) {
-        if ((left.reported || right.reported || caseBattery.reported) && !isSynced) {
+        BudsProtocol.Battery[] merged = mergeBattery(left, right, caseBattery);
+        BudsProtocol.Battery mergedLeft = merged[0];
+        BudsProtocol.Battery mergedRight = merged[1];
+        BudsProtocol.Battery mergedCase = merged[2];
+        if ((mergedLeft.reported || mergedRight.reported || mergedCase.reported) && !isSynced) {
             isSynced = true;
             updateStatus(true);
         }
-        updateBattery(left, right, caseBattery);
+        updateBattery(mergedLeft, mergedRight, mergedCase);
+        saveBattery(mergedLeft, mergedRight, mergedCase);
     }
 
     @Override
@@ -459,6 +469,63 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
             batteryRightView.setLevel(right.level, right.charging, right.reported);
             batteryCaseView.setLevel(caseBattery.level, caseBattery.charging, caseBattery.reported);
         });
+    }
+
+    private void loadBattery() {
+        updateBattery(new BudsProtocol.Battery(0, false, false), new BudsProtocol.Battery(0, false, false), new BudsProtocol.Battery(0, false, false));
+    }
+
+    private BudsProtocol.Battery loadBattery(String key) {
+        int level = prefs.getInt(key + "_level", 0);
+        boolean charging = prefs.getBoolean(key + "_charging", false);
+        boolean reported = prefs.getBoolean(key + "_reported", false);
+        return new BudsProtocol.Battery(level, charging, reported);
+    }
+
+    private void saveBattery(BudsProtocol.Battery left, BudsProtocol.Battery right, BudsProtocol.Battery caseBattery) {
+        prefs.edit()
+            .putInt("left_level", left.level)
+            .putBoolean("left_charging", left.charging)
+            .putBoolean("left_reported", left.reported)
+            .putInt("right_level", right.level)
+            .putBoolean("right_charging", right.charging)
+            .putBoolean("right_reported", right.reported)
+            .putInt("case_level", caseBattery.level)
+            .putBoolean("case_charging", caseBattery.charging)
+            .putBoolean("case_reported", caseBattery.reported)
+            .apply();
+    }
+
+    private BudsProtocol.Battery[] mergeBattery(BudsProtocol.Battery left, BudsProtocol.Battery right, BudsProtocol.Battery caseBattery) {
+        BudsProtocol.Battery persistedLeft = loadBattery("left");
+        BudsProtocol.Battery persistedRight = loadBattery("right");
+        BudsProtocol.Battery persistedCase = loadBattery("case");
+
+        boolean leftReported = left.reported;
+        boolean rightReported = right.reported;
+        if (leftReported && rightReported) {
+            if (!left.charging && right.charging) rightReported = false;
+            else if (left.charging && !right.charging) leftReported = false;
+        }
+
+        BudsProtocol.Battery mergedLeft = leftReported ? left : new BudsProtocol.Battery(persistedLeft.level, persistedLeft.charging, false);
+        BudsProtocol.Battery mergedRight = rightReported ? right : new BudsProtocol.Battery(persistedRight.level, persistedRight.charging, false);
+
+        BudsProtocol.Battery mergedCase;
+        if (caseBattery.reported) {
+            if (caseBattery.level == 100 && persistedCase.level != 100) {
+                case100Count++;
+                mergedCase = case100Count >= 2 ? caseBattery : persistedCase;
+            } else {
+                case100Count = 0;
+                mergedCase = caseBattery;
+            }
+        } else {
+            case100Count = 0;
+            mergedCase = persistedCase;
+        }
+
+        return new BudsProtocol.Battery[]{mergedLeft, mergedRight, mergedCase};
     }
 
     private void updateAnc() {

@@ -21,7 +21,7 @@ rm -rf "$BUILD"
 mkdir -p "$BUILD/gen" "$BUILD/classes" "$BUILD/apk"
 
 $AAPT2 compile --dir "$RES" -o "$BUILD/res.zip"
-$AAPT2 link -o "$BUILD/unsigned.apk" -I "$ANDROID_JAR" --manifest "$MANIFEST" -R "$BUILD/res.zip" --auto-add-overlay --min-sdk-version 26 --target-sdk-version 34 --version-code 1 --version-name "1.0" --java "$BUILD/gen"
+$AAPT2 link -o "$BUILD/unsigned.apk" -I "$ANDROID_JAR" --manifest "$MANIFEST" -R "$BUILD/res.zip" --auto-add-overlay --min-sdk-version 26 --target-sdk-version 34 --version-code 2 --version-name "1.1" --java "$BUILD/gen"
 
 javac --release 8 -cp "$ANDROID_JAR" -d "$BUILD/classes" "$BUILD/gen/$PKG_PATH/R.java" "$SRC"/*.java
 

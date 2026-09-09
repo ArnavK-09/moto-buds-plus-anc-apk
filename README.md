@@ -30,8 +30,8 @@
 
 > Here's the expected look of Moto Buds+ ANC
 
-| Home Screen |
-|------------|
+| Home Screen                |
+| -------------------------- |
 | ![Demo](./screenshot.jpeg) |
 
 ---
@@ -98,7 +98,6 @@ Found a bug or need help? Please create an issue on the [GitHub repository](http
 </p>
 
 ---
-
 
 <p align="center">
     <strong>🌟 If you find this project helpful, please give it a star on GitHub! 🌟</strong>

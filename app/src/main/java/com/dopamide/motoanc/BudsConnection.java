@@ -281,8 +281,6 @@ public class BudsConnection {
 
     private void closeRfcomm() {
         running.set(false);
-        try { if (rfcommIn != null) rfcommIn.close(); } catch (Exception ignored) {}
-        try { if (rfcommOut != null) rfcommOut.close(); } catch (Exception ignored) {}
         try { if (rfcommSocket != null) rfcommSocket.close(); } catch (Exception ignored) {}
         rfcommIn = null;
         rfcommOut = null;
