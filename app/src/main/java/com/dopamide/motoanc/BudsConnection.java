@@ -2,12 +2,6 @@ package com.dopamide.motoanc;
 
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
-import android.bluetooth.BluetoothGatt;
-import android.bluetooth.BluetoothGattCallback;
-import android.bluetooth.BluetoothGattCharacteristic;
-import android.bluetooth.BluetoothGattDescriptor;
-import android.bluetooth.BluetoothGattService;
-import android.bluetooth.BluetoothProfile;
 import android.bluetooth.BluetoothSocket;
 import android.content.Context;
 import android.os.Handler;
@@ -30,14 +24,11 @@ public class BudsConnection {
         void onDisconnected();
         void onBattery(BudsProtocol.Battery left, BudsProtocol.Battery right, BudsProtocol.Battery caseBattery);
         void onAncMode(int mode);
-        void onDualConnection(boolean enabled);
-        void onLog(String line);
     }
 
     private static final String TAG = "MotoBuds";
     private static final UUID SERVICE_UUID = UUID.fromString(BudsProtocol.SERVICE_UUID);
     private static final UUID SERVICE_UUID_OLD = UUID.fromString("00009fe0-4899-11ee-be56-0242ac120002");
-    private static final UUID CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
     private static final int RECONNECT_DELAY_MS = 5000;
 
     private final Context context;
@@ -57,18 +48,13 @@ public class BudsConnection {
     private InputStream rfcommIn;
     private OutputStream rfcommOut;
 
-    private BluetoothGatt gatt;
-    private BluetoothGattCharacteristic writeChar;
-    private volatile int txMtu = 20;
-    private final Object writeLock = new Object();
-    private volatile boolean writeDone = true;
-
     public BudsConnection(Context context, Listener listener) {
         this.context = context.getApplicationContext();
         this.listener = listener;
     }
 
     public void start(String address) {
+        stop();
         targetAddress = address;
         shouldRun.set(true);
         connect();
@@ -78,7 +64,6 @@ public class BudsConnection {
         shouldRun.set(false);
         running.set(false);
         closeRfcomm();
-        disconnectGatt();
         interrupt(connectThread);
         interrupt(readThread);
         interrupt(writeThread);
@@ -126,16 +111,9 @@ public class BudsConnection {
                 } catch (Exception e) {
                     log("rfcomm error " + e.getMessage());
                 }
-                if (!connected && shouldRun.get()) {
-                    try {
-                        connected = connectGatt(device);
-                    } catch (Exception e) {
-                        log("gatt error " + e.getMessage());
-                    }
-                }
 
                 if (!connected) {
-                    log("all transports failed");
+                    log("rfcomm failed");
                     sleep(RECONNECT_DELAY_MS);
                     continue;
                 }
@@ -149,7 +127,6 @@ public class BudsConnection {
             } finally {
                 running.set(false);
                 closeRfcomm();
-                disconnectGatt();
                 postDisconnected();
             }
             if (!shouldRun.get()) break;
@@ -193,7 +170,7 @@ public class BudsConnection {
         }
         if (socket == null) {
             for (int channel = 1; channel <= 30 && socket == null; channel++) {
-                if (!running.get()) break;
+                if (!shouldRun.get()) break;
                 log("rfcomm channel " + channel);
                 socket = tryRfcommChannel(device, channel, false);
                 if (socket == null) {
@@ -310,116 +287,7 @@ public class BudsConnection {
         rfcommIn = null;
         rfcommOut = null;
         rfcommSocket = null;
-    }
-
-    private boolean connectGatt(BluetoothDevice device) {
-        log("gatt connect");
-        synchronized (this) {
-            gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE);
-        }
-        if (gatt == null) {
-            log("gatt null");
-            return false;
-        }
-        int waited = 0;
-        while (shouldRun.get() && !running.get() && waited < 15000) {
-            sleep(200);
-            waited += 200;
-        }
-        return running.get();
-    }
-
-    private final BluetoothGattCallback gattCallback = new GattCallback(this);
-
-    private static class GattCallback extends BluetoothGattCallback {
-        private final BudsConnection conn;
-        GattCallback(BudsConnection c) { this.conn = c; }
-
-        @Override
-        public void onConnectionStateChange(BluetoothGatt g, int status, int newState) {
-            if (newState == BluetoothProfile.STATE_CONNECTED) {
-                conn.log("gatt connected");
-                g.requestMtu(517);
-            } else {
-                conn.log("gatt disconnected status=" + status);
-                conn.running.set(false);
-                conn.disconnectGatt();
-                conn.postDisconnected();
-            }
-        }
-
-        @Override
-        public void onMtuChanged(BluetoothGatt g, int mtu, int status) {
-            conn.txMtu = (status == BluetoothGatt.GATT_SUCCESS) ? Math.max(20, mtu - 3) : 20;
-            conn.log("mtu " + mtu + " payload " + conn.txMtu);
-            g.discoverServices();
-        }
-
-        @Override
-        public void onServicesDiscovered(BluetoothGatt g, int status) {
-            if (status != BluetoothGatt.GATT_SUCCESS) {
-                conn.log("service discovery failed " + status);
-                conn.disconnectGatt();
-                return;
-            }
-            BluetoothGattService service = g.getService(SERVICE_UUID);
-            if (service == null) service = g.getService(SERVICE_UUID_OLD);
-            if (service == null) {
-                conn.log("service not found");
-                conn.disconnectGatt();
-                return;
-            }
-            conn.log("gatt service found " + service.getUuid());
-            conn.writeChar = null;
-            for (BluetoothGattCharacteristic c : service.getCharacteristics()) {
-                int props = c.getProperties();
-                if (conn.writeChar == null && (props & BluetoothGattCharacteristic.PROPERTY_WRITE) != 0) {
-                    conn.writeChar = c;
-                    conn.log("gatt write char " + c.getUuid());
-                }
-                if ((props & BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0) {
-                    g.setCharacteristicNotification(c, true);
-                    BluetoothGattDescriptor desc = c.getDescriptor(CCCD_UUID);
-                    if (desc != null) {
-                        desc.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-                        g.writeDescriptor(desc);
-                        conn.log("gatt notify enabled " + c.getUuid());
-                    }
-                }
-            }
-            if (conn.writeChar == null) {
-                conn.log("gatt no write characteristic");
-                conn.disconnectGatt();
-                return;
-            }
-            conn.running.set(true);
-            conn.postConnected();
-            conn.startRefresh();
-        }
-
-        @Override
-        public void onDescriptorWrite(BluetoothGatt g, BluetoothGattDescriptor descriptor, int status) {
-            if (status != BluetoothGatt.GATT_SUCCESS) conn.log("gatt descriptor write failed " + status);
-        }
-
-        @Override
-        public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic characteristic, byte[] value) {
-            conn.handleBytes(value);
-        }
-
-        @Override
-        public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic characteristic) {
-            conn.handleBytes(characteristic.getValue());
-        }
-
-        @Override
-        public void onCharacteristicWrite(BluetoothGatt g, BluetoothGattCharacteristic characteristic, int status) {
-            synchronized (conn.writeLock) {
-                conn.writeDone = true;
-                conn.writeLock.notifyAll();
-            }
-            if (status != BluetoothGatt.GATT_SUCCESS) conn.log("gatt write failed " + status);
-        }
+        writeQueue.clear();
     }
 
     private void handleBytes(byte[] value) {
@@ -467,7 +335,6 @@ public class BudsConnection {
                     for (int i = 1, n = 0; n < count && i + 2 < p.length; i += 3, n++) {
                         int cat = p[i] & 0xff;
                         if (cat == BudsProtocol.TOGGLE_CATEGORY_ANC_PREFERENCE) postAnc(BudsProtocol.decodeAnc(p[i + 1] & 0xff, p[i + 2] & 0xff));
-                        else if (cat == BudsProtocol.TOGGLE_CATEGORY_DUAL_CONNECTION) postDual((p[i + 1] & 0xff) != 0);
                     }
                 }
                 break;
@@ -476,13 +343,7 @@ public class BudsConnection {
                 if (p.length >= 3) {
                     int cat = p[0] & 0xff;
                     if (cat == BudsProtocol.TOGGLE_CATEGORY_ANC_PREFERENCE) postAnc(BudsProtocol.decodeAnc(p[1] & 0xff, p[2] & 0xff));
-                    else if (cat == BudsProtocol.TOGGLE_CATEGORY_DUAL_CONNECTION) postDual((p[1] & 0xff) != 0);
                 }
-                break;
-            case BudsProtocol.GET_DUAL_CONNECTION:
-            case BudsProtocol.DUAL_CONNECTION_CHANGED:
-                if (p.length >= 2) postDual((p[1] & 0xff) != 0);
-                else if (p.length >= 1) postDual((p[0] & 0xff) != 0);
                 break;
         }
     }
@@ -494,11 +355,6 @@ public class BudsConnection {
         if (mode == BudsProtocol.ANC_ADAPTIVE) {
             queueOrWrite(protocol.buildFrame(BudsProtocol.SET_ADAPTATION_STATUS, new byte[]{0x01}));
         }
-    }
-
-    public void sendDualConnection(boolean enabled) {
-        if (!running.get()) return;
-        queueOrWrite(protocol.buildFrame(BudsProtocol.SET_DUAL_CONNECTION, new byte[]{0x01, enabled ? (byte) 0x01 : 0x00}));
     }
 
     public void queryBattery() {
@@ -516,50 +372,13 @@ public class BudsConnection {
         queueOrWrite(protocol.buildFrame(BudsProtocol.GET_TOGGLE_CONFIGS, new byte[0]));
     }
 
-    public void queryDualConnection() {
-        if (!running.get()) return;
-        queueOrWrite(protocol.buildFrame(BudsProtocol.GET_DUAL_CONNECTION, new byte[0]));
-    }
-
     private void queueOrWrite(byte[] data) {
         int innerOffset = 6;
         if (data.length >= innerOffset + 2) {
             int opcode = ((data[innerOffset] & 0xff) << 8) | (data[innerOffset + 1] & 0xff);
             log("send op=0x" + Integer.toHexString(opcode));
         }
-        if (rfcommOut != null) {
-            writeQueue.offer(data);
-        } else if (writeChar != null) {
-            gattWrite(data);
-        }
-    }
-
-    private void gattWrite(byte[] data) {
-        BluetoothGattCharacteristic wc = writeChar;
-        if (wc == null) return;
-        int offset = 0;
-        while (offset < data.length) {
-            int len = Math.min(txMtu, data.length - offset);
-            byte[] chunk = new byte[len];
-            System.arraycopy(data, offset, chunk, 0, len);
-            wc.setValue(chunk);
-            wc.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
-            synchronized (writeLock) { writeDone = false; }
-            boolean ok;
-            synchronized (this) { ok = gatt != null && gatt.writeCharacteristic(wc); }
-            if (!ok) {
-                log("gatt write rejected");
-                break;
-            }
-            synchronized (writeLock) {
-                try { if (!writeDone) writeLock.wait(2000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
-                if (!writeDone) {
-                    log("gatt write timeout");
-                    break;
-                }
-            }
-            offset += len;
-        }
+        if (rfcommOut != null) writeQueue.offer(data);
     }
 
     private void startRefresh() {
@@ -581,7 +400,6 @@ public class BudsConnection {
             BudsProtocol.GET_BATTERY_LEVEL,
             BudsProtocol.GET_ANC_MODE,
             BudsProtocol.GET_TOGGLE_CONFIGS,
-            BudsProtocol.GET_DUAL_CONNECTION,
         };
         for (int op : ops) {
             if (!running.get()) return;
@@ -589,17 +407,9 @@ public class BudsConnection {
                 case BudsProtocol.GET_BATTERY_LEVEL: queryBattery(); break;
                 case BudsProtocol.GET_ANC_MODE: queryAnc(); break;
                 case BudsProtocol.GET_TOGGLE_CONFIGS: queryToggleConfigs(); break;
-                case BudsProtocol.GET_DUAL_CONNECTION: queryDualConnection(); break;
             }
             sleep(250);
         }
-    }
-
-    private synchronized void disconnectGatt() {
-        running.set(false);
-        try { if (gatt != null) { gatt.disconnect(); gatt.close(); } } catch (Exception ignored) {}
-        gatt = null;
-        writeChar = null;
     }
 
     private void sleep(long ms) {
@@ -607,14 +417,10 @@ public class BudsConnection {
     }
 
     private void interrupt(Thread t) { if (t != null) t.interrupt(); }
-    private void log(String s) {
-        Log.d(TAG, s);
-        post(() -> { if (listener != null) listener.onLog(s); });
-    }
+    private void log(String s) { Log.d(TAG, s); }
     private void postConnected() { post(() -> { if (listener != null) listener.onConnected(); }); }
     private void postDisconnected() { post(() -> { if (listener != null) listener.onDisconnected(); }); }
     private void postAnc(int m) { post(() -> { if (listener != null) listener.onAncMode(m); }); }
-    private void postDual(boolean v) { post(() -> { if (listener != null) listener.onDualConnection(v); }); }
     private void postBattery(BudsProtocol.Battery l, BudsProtocol.Battery r, BudsProtocol.Battery c) { post(() -> { if (listener != null) listener.onBattery(l, r, c); }); }
     private void post(Runnable r) { mainHandler.post(r); }
 }

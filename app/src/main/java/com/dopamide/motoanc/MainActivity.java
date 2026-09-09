@@ -99,12 +99,13 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
     protected void onPause() {
         super.onPause();
         try { unregisterReceiver(btStateReceiver); } catch (Exception ignored) {}
+        if (connection != null) connection.stop();
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        connection.stop();
+        if (connection != null) connection.stop();
     }
 
     private void checkPermission() {
@@ -231,12 +232,6 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
         updateAnc();
     }
 
-    @Override
-    public void onDualConnection(boolean enabled) {}
-
-    @Override
-    public void onLog(String line) {}
-
     private LinearLayout createToolbar() {
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -249,7 +244,7 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
         icon.setLayoutParams(new LinearLayout.LayoutParams(dp(28), dp(28)));
 
         TextView title = new TextView(this);
-        title.setText("Moto Buds+");
+        title.setText(R.string.app_title);
         title.setTextColor(color(R.color.text_primary));
         title.setTextSize(20);
         title.setGravity(Gravity.START);
@@ -291,7 +286,7 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
         syncSpinner.setVisibility(View.GONE);
 
         TextView bose = new TextView(this);
-        bose.setText("SOUND BY BOSE");
+        bose.setText(R.string.sound_by_bose);
         bose.setTextColor(color(R.color.text_secondary));
         bose.setTextSize(10);
         bose.setLetterSpacing(0.1f);
@@ -320,7 +315,7 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
 
         ImageView icon = new ImageView(this);
         icon.setImageResource(R.drawable.hero_earbuds);
-        icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(240), dp(240));
         iconParams.gravity = Gravity.CENTER;
         icon.setLayoutParams(iconParams);
@@ -378,7 +373,7 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
         section.setLayoutParams(marginBottom(dp(16)));
 
         TextView header = new TextView(this);
-        header.setText("Noise control");
+        header.setText(R.string.noise_control);
         header.setTextColor(color(R.color.text_primary));
         header.setTextSize(16);
         header.setLayoutParams(marginBottom(dp(12)));
@@ -412,7 +407,7 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
         card.setPadding(dp(12), dp(16), dp(12), dp(16));
 
         int[] icons = {R.drawable.ic_anc_off, R.drawable.ic_transparency, R.drawable.ic_anc_on, R.drawable.ic_adaptive};
-        String[] names = {"Off", "Transparency", "ANC", "Adaptive"};
+        int[] names = {R.string.anc_off, R.string.anc_transparency, R.string.anc_anc, R.string.anc_adaptive};
 
         ImageView icon = new ImageView(this);
         icon.setImageResource(icons[mode]);
@@ -420,7 +415,7 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
         icon.setLayoutParams(new LinearLayout.LayoutParams(dp(40), dp(40)));
 
         TextView label = new TextView(this);
-        label.setText(names[mode]);
+        label.setText(getString(names[mode]));
         label.setTextColor(color(R.color.text_primary));
         label.setTextSize(13);
         label.setGravity(Gravity.CENTER);
@@ -477,16 +472,6 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
         });
     }
 
-    private String ancName(int mode) {
-        switch (mode) {
-            case BudsProtocol.ANC_OFF: return "Off";
-            case BudsProtocol.ANC_TRANSPARENCY: return "Transparency";
-            case BudsProtocol.ANC_ANC: return "ANC";
-            case BudsProtocol.ANC_ADAPTIVE: return "Adaptive";
-            default: return "Off";
-        }
-    }
-
     private GradientDrawable ancCardBg(boolean selected) {
         GradientDrawable d = new GradientDrawable();
         d.setColor(selected ? color(R.color.text_primary) : color(R.color.surface));
@@ -512,12 +497,6 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
             mask.setCornerRadius(dp(22));
             v.setForeground(new RippleDrawable(ColorStateList.valueOf(0x40FFFFFF), null, mask));
         }
-    }
-
-    private LinearLayout.LayoutParams weight1Margined(int margin) {
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        p.setMargins(margin, 0, margin, 0);
-        return p;
     }
 
     private LinearLayout.LayoutParams marginBottom(int px) {

@@ -20,12 +20,7 @@ public class BudsProtocol {
     public static final int SET_ANC_MODE = 0x201;
     public static final int SET_ADAPTATION_STATUS = 0x203;
     public static final int ANC_MODE_CHANGED = 0x204;
-    public static final int GET_DUAL_CONNECTION = 0x406;
-    public static final int SET_DUAL_CONNECTION = 0x407;
-    public static final int DUAL_CONNECTION_CHANGED = 0x40f;
-
     public static final int TOGGLE_CATEGORY_ANC_PREFERENCE = 0x01;
-    public static final int TOGGLE_CATEGORY_DUAL_CONNECTION = 0x08;
 
     public static final int ANC_OFF = 0;
     public static final int ANC_TRANSPARENCY = 1;

@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Moto Buds ANC</string>
+    <string name="app_title">Moto Buds+</string>
     <string name="status_connected">Connected</string>
     <string name="status_disconnected">Not connected</string>
     <string name="status_connecting">Connecting</string>
     <string name="status_no_device">No Moto Buds found</string>
+    <string name="noise_control">Noise control</string>
+    <string name="sound_by_bose">SOUND BY BOSE</string>
     <string name="battery_left">Left</string>
     <string name="battery_right">Right</string>
     <string name="battery_case">Case</string>
