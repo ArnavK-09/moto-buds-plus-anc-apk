@@ -32,7 +32,7 @@
 
 | Home Screen |
 |------------|
-| ![Demo](desired-screenshot.jpeg) |
+| ![Demo](./screenshot.jpeg) |
 
 ---
 
@@ -89,15 +89,6 @@ Found a bug or need help? Please create an issue on the [GitHub repository](http
   </tbody>
 </table>
 
-## 🛣️ Roadmap
-
-| Task | Status |
-| :---: | :---: |
-| Basic ANC control | 🟢 |
-| Battery display | 🟢 |
-| Background-free operation | 🟢 |
-| Notification support | 🔴 |
-
 ---
 
 <h2 align="center">📄 License</h2>
@@ -108,7 +99,6 @@ Found a bug or need help? Please create an issue on the [GitHub repository](http
 
 ---
 
-<!-- <h3 align="center">💖 Thanks for Using Moto Buds+ ANC 💖</h3> -->
 
 <p align="center">
     <strong>🌟 If you find this project helpful, please give it a star on GitHub! 🌟</strong>
