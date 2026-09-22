@@ -2,7 +2,6 @@ package com.dopamide.motoanc;
 
 import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothDevice;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -14,7 +13,6 @@ import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.ParcelUuid;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -25,9 +23,6 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
-
-import java.util.Set;
-import java.util.UUID;
 
 public class MainActivity extends Activity implements BudsConnection.Listener {
     private static final int PERMISSION_REQUEST = 1;
@@ -46,7 +41,6 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
     private ImageView[] ancIcons = new ImageView[4];
     private TextView[] ancLabels = new TextView[4];
 
-    private BudsConnection connection;
     private SharedPreferences prefs;
     private int currentAnc = BudsProtocol.ANC_OFF;
     private boolean isConnected = false;
@@ -88,8 +82,9 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
         scroll.addView(root);
         setContentView(scroll);
         prefs = getSharedPreferences("buds", Context.MODE_PRIVATE);
+        currentAnc = prefs.getInt("anc_mode", BudsProtocol.ANC_OFF);
         loadBattery();
-        connection = new BudsConnection(this, this);
+        updateAnc();
         checkPermission();
     }
 
@@ -97,6 +92,7 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
     protected void onResume() {
         super.onResume();
         registerReceiver(btStateReceiver, new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED));
+        BudsManager.get(this).addListener(this);
         if (hasPermission()) startConnection();
     }
 
@@ -104,12 +100,13 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
     protected void onPause() {
         super.onPause();
         try { unregisterReceiver(btStateReceiver); } catch (Exception ignored) {}
+        BudsManager.get(this).stop(this);
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (connection != null) connection.stop();
+        BudsManager.get(this).stop(this);
     }
 
     private void checkPermission() {
@@ -174,37 +171,7 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
             }
             return;
         }
-        connection.start(findDeviceAddress());
-    }
-
-    private String findDeviceAddress() {
-        BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
-        if (adapter == null) return null;
-        try {
-            Set<BluetoothDevice> bonded = adapter.getBondedDevices();
-            if (bonded == null) return null;
-            for (BluetoothDevice d : bonded) {
-                String name = d.getName();
-                if (name != null) {
-                    String lower = name.toLowerCase();
-                    if (lower.contains("moto buds") || lower.contains("motobuds")) {
-                        return d.getAddress();
-                    }
-                }
-                ParcelUuid[] uuids = d.getUuids();
-                if (uuids != null) {
-                    UUID spp = UUID.fromString(BudsProtocol.SERVICE_UUID);
-                    for (ParcelUuid u : uuids) {
-                        if (u != null && spp.equals(u.getUuid())) {
-                            return d.getAddress();
-                        }
-                    }
-                }
-            }
-        } catch (SecurityException e) {
-            updateStatus(false);
-        }
-        return null;
+        BudsManager.get(this).start(this, DeviceFinder.find(this));
     }
 
     @Override
@@ -239,6 +206,7 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
     @Override
     public void onAncMode(int mode) {
         currentAnc = mode;
+        prefs.edit().putInt("anc_mode", mode).apply();
         updateAnc();
     }
 
@@ -438,7 +406,7 @@ public class MainActivity extends Activity implements BudsConnection.Listener {
         card.setOnClickListener(v -> {
             currentAnc = mode;
             updateAnc();
-            connection.sendAncMode(mode);
+            BudsManager.get(this).sendAncMode(mode);
         });
 
         ancCards[mode] = card;
