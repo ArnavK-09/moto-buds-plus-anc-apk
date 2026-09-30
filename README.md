@@ -26,6 +26,21 @@
 ./build.sh
 ```
 
+The app is written in 100% Kotlin. The build uses `aapt2`, `kotlinc` and `d8`
+straight from the Android build tools — no Gradle, no Android Studio. The Kotlin
+compiler is downloaded into `.toolchain/` automatically on first run.
+
+## 🧹 Formatting
+
+Kotlin sources are formatted with [ktlint](https://pinterest.github.io/ktlint/)
+and everything else with Prettier:
+
+```bash
+npm install
+npm run format        # apply
+npm run format:check  # verify
+```
+
 ## 📷 Screenshots
 
 > Here's the expected look of Moto Buds+ ANC

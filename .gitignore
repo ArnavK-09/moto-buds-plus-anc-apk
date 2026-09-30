@@ -5,6 +5,7 @@ package-lock.json
 *.apk
 *.keystore
 *.jks
+*.keystore.*
 *.log
 *.zip
 .DS_Store

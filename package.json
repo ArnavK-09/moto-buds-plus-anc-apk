@@ -1,11 +1,14 @@
 {
   "name": "moto-buds-plus-anc-apk",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "description": "Minimal Android controller for Moto Buds+ ANC & battery",
   "private": true,
   "scripts": {
-    "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "build": "./build.sh",
+    "format": "prettier --write . && npm run format:kotlin",
+    "format:check": "prettier --check . && npm run format:kotlin:check",
+    "format:kotlin": "./toolchain.sh ktlint --relative --format \"app/src/main/java/**/*.kt\"",
+    "format:kotlin:check": "./toolchain.sh ktlint --relative \"app/src/main/java/**/*.kt\""
   },
   "devDependencies": {
     "prettier": "^3.3.3"
