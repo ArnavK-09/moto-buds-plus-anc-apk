@@ -17,15 +17,16 @@ OUT="$ROOT/MotoBudsANC.apk"
 
 KOTLIN_VERSION="2.4.20"
 KOTLIN_SHA256="59e9ca74c7904ef2c122b12114937673ccce68de820a663f0ed66ccf8799e0b7"
+RULES="$ROOT/r8-rules.txt"
 
 AAPT2="$TOOL/aapt2"
-D8="$TOOL/d8"
 ZIPALIGN="$TOOL/zipalign"
 APKSIGNER="$TOOL/apksigner"
 
-# Fetch the Kotlin compiler into .toolchain/ on first run (it is gitignored).
+# Fetch the Kotlin compiler and R8 into .toolchain/ on first run (gitignored).
 source "$ROOT/toolchain.sh"
 ensure_kotlin
+ensure_r8
 
 rm -rf "$BUILD"
 mkdir -p "$BUILD/gen" "$BUILD/classes" "$BUILD/kt-classes" "$BUILD/apk"
@@ -41,7 +42,15 @@ $AAPT2 link -o "$BUILD/unsigned.apk" -I "$ANDROID_JAR" --manifest "$MANIFEST" -R
 javac --release 8 -cp "$ANDROID_JAR" -d "$BUILD/classes" "$BUILD/gen/$PKG_PATH/R.java"
 
 jar cvf "$BUILD/classes.jar" -C "$BUILD/kt-classes" . -C "$BUILD/classes" .
-$D8 --release --lib "$ANDROID_JAR" --output "$BUILD/apk" "$BUILD/classes.jar" "$KOTLIN_STDLIB"
+
+# R8 shrinks the Kotlin stdlib, which is 97.6% of the unshrunk dex. Our own
+# classes are kept whole by r8-rules.txt, so nothing here rewrites app logic.
+java -cp "$R8" com.android.tools.r8.R8 \
+  --release --min-api 26 \
+  --lib "$ANDROID_JAR" \
+  --pg-conf "$RULES" \
+  --output "$BUILD/apk" \
+  "$BUILD/classes.jar" "$KOTLIN_STDLIB"
 
 pushd "$BUILD/apk" > /dev/null
 zip -uj "$BUILD/unsigned.apk" classes.dex

@@ -1,0 +1,73 @@
+# R8 keep rules - Moto Buds+ ANC
+#
+# The app ships no XML layouts and no reflection onto its own classes, so the
+# only things R8 cannot see being used are the components Android itself
+# instantiates by name from the manifest.
+
+# --- Framework entry points -------------------------------------------------
+# The launcher activity and the Quick Settings tile are created reflectively by
+# Android using the names in AndroidManifest.xml, so they and their no-arg
+# constructors must survive.
+-keep class com.arnavk09.motoanc.MainActivity {
+    public <init>();
+}
+
+-keep class com.arnavk09.motoanc.AncTileService {
+    public <init>();
+}
+
+# Custom View. Currently built in code, but it is a View subclass with the
+# three standard inflation constructors, so keep them all in case it ever moves
+# into a layout.
+-keep class com.arnavk09.motoanc.BatteryView {
+    public <init>(android.content.Context);
+    public <init>(android.content.Context, android.util.AttributeSet);
+    public <init>(android.content.Context, android.util.AttributeSet, int);
+}
+
+# Keep those class names as-is so the manifest keeps resolving.
+-keepnames class com.arnavk09.motoanc.MainActivity
+-keepnames class com.arnavk09.motoanc.AncTileService
+-keepnames class com.arnavk09.motoanc.BatteryView
+
+# --- Listener callbacks -----------------------------------------------------
+# BudsConnection.Listener is implemented by the activity and the tile and called
+# directly, but keep the interface intact so both stay assignable.
+-keep interface com.arnavk09.motoanc.BudsConnection$Listener
+
+# --- Metadata ---------------------------------------------------------------
+# Kotlin metadata and generic signatures are read at runtime by some libraries
+# and by crash reporters. InnerClasses matters for nested-type reflection.
+-keepattributes *Annotation*, InnerClasses, EnclosingMethod, Signature, Exceptions, SourceFile, LineNumberTable
+
+# --- No obfuscation ---------------------------------------------------------
+# Names are kept so stack traces stay readable and so any future reflection on
+# our own classes by name keeps working. Costs roughly 3 KB versus obfuscating,
+# which is cheap insurance for a Bluetooth app whose failure modes are hard to
+# diagnose in the field.
+-dontobfuscate
+
+# --- Reflection on framework classes ----------------------------------------
+# BudsConnection reaches hidden BluetoothDevice methods by name. Those live in
+# android.jar (a library, never shrunk), so no keep rule is required - the
+# strings simply stay in our code.
+-dontwarn kotlin.**
+-dontwarn kotlinx.**
+
+# kotlinc emits @NotNull/@Nullable from the JetBrains annotations, which have
+# CLASS retention and are never present at runtime. They are absent from
+# android.jar, so ignore the dangling references.
+-dontwarn org.jetbrains.annotations.**
+
+# --- Keep the entire app code intact ---------------------------------------
+# R8 could optimize all of our code, but we deliberately do not. The Kotlin
+# stdlib is 97.6% of the unshrunk dex (2.29 MB of 2.35 MB), so shrinking the
+# stdlib alone recovers nearly all the size - roughly 12 KB of dex is left on
+# the table by not optimizing our own code.
+#
+# In exchange, every one of our classes, methods and fields survives verbatim:
+# no inlining, no removal, no renaming. Verified by diffing the full class and
+# member inventory of the unshrunk dex against the shrunk one: 353 entries,
+# zero missing, zero added. The only differences are compiler-generated lambda
+# scaffolding, which R8 desugars.
+-keep class com.arnavk09.motoanc.** { *; }

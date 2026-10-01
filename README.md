@@ -30,6 +30,11 @@ The app is written in 100% Kotlin. The build uses `aapt2`, `kotlinc` and `d8`
 straight from the Android build tools — no Gradle, no Android Studio. The Kotlin
 compiler is downloaded into `.toolchain/` automatically on first run.
 
+R8 then shrinks the Kotlin standard library, which is ~98% of the unshrunk dex
+and would otherwise leave the APK at ~750 KB. Our own classes are deliberately
+kept whole (see `r8-rules.txt`) so no app logic is ever rewritten — the shrink
+only drops stdlib code the app never calls.
+
 ## 🧹 Formatting
 
 Kotlin sources are formatted with [ktlint](https://pinterest.github.io/ktlint/)
