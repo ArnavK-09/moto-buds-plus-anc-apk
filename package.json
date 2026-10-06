@@ -1,6 +1,6 @@
 {
   "name": "moto-buds-plus-anc-apk",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Minimal Android controller for Moto Buds+ ANC & battery",
   "private": true,
   "scripts": {
