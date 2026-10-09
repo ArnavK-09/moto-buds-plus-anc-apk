@@ -97,6 +97,7 @@ class BudsProtocol {
 
     companion object {
         const val SERVICE_UUID = "fc9d9fe0-4899-11ee-be56-0242ac120002"
+        const val SERVICE_UUID_OLD = "00009fe0-4899-11ee-be56-0242ac120002"
 
         private val HEAD = byteArrayOf(0x48, 0x45, 0x41, 0x44)
         private val TAIL = byteArrayOf(0x54, 0x41, 0x49, 0x4c)

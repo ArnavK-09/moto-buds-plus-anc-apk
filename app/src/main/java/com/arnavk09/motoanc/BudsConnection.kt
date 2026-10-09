@@ -2,6 +2,7 @@ package com.arnavk09.motoanc
 
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.os.Handler
@@ -81,10 +82,19 @@ class BudsConnection(
         connectThread!!.start()
     }
 
+    /** Recommended getter; getDefaultAdapter() alone is deprecated and the
+     *  first API an OS upgrade is likely to stop resolving. */
+    private fun btAdapter(): BluetoothAdapter? =
+        try {
+            (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
+        } catch (ignored: Throwable) {
+            null
+        } ?: BluetoothAdapter.getDefaultAdapter()
+
     private fun connectLoop() {
         while (shouldRun.get()) {
             try {
-                val adapter = BluetoothAdapter.getDefaultAdapter()
+                val adapter = btAdapter()
                 if (adapter == null) {
                     log("bluetooth not available")
                     sleep(RECONNECT_DELAY_MS)
@@ -145,40 +155,79 @@ class BudsConnection(
 
     private fun findBondedDevice(adapter: BluetoothAdapter): BluetoothDevice? {
         try {
-            for (d in adapter.getBondedDevices()) {
-                val name = d.getName()
-                if (name != null) {
-                    val lower = name.lowercase()
-                    if (lower.contains("moto buds") ||
-                        lower.contains("motobuds") ||
-                        lower.contains("moto buds+")
-                    ) {
-                        return d
-                    }
-                }
-                val uuids = d.getUuids()
-                if (uuids != null) {
-                    for (u in uuids) {
-                        if (u != null && (SERVICE_UUID == u.getUuid() || SERVICE_UUID_OLD == u.getUuid())) {
-                            return d
-                        }
-                    }
-                }
-            }
-        } catch (e: SecurityException) {
+            strictMatch(adapter)?.let { return it }
+            log("no strict match; refreshing SDP")
+            refreshSdp(adapter)
+            return strictMatch(adapter)
+        } catch (e: Throwable) {
             log("scan perm " + e.message)
         }
         return null
+    }
+
+    /** Name or advertised-service-UUID match against the cached UUID list. */
+    private fun strictMatch(adapter: BluetoothAdapter): BluetoothDevice? {
+        for (d in adapter.getBondedDevices()) {
+            val name = d.getName()
+            if (name != null) {
+                val lower = name.lowercase()
+                if (lower.contains("moto buds") ||
+                    lower.contains("motobuds") ||
+                    lower.contains("moto buds+")
+                ) {
+                    return d
+                }
+            }
+            val uuids = d.getUuids()
+            if (uuids != null) {
+                for (u in uuids) {
+                    if (u != null && (SERVICE_UUID == u.getUuid() || SERVICE_UUID_OLD == u.getUuid())) {
+                        return d
+                    }
+                }
+            } else {
+                log("no cached uuids: " + (name ?: d.getAddress()))
+            }
+        }
+        return null
+    }
+
+    /**
+     * SDP caches can be empty after an OS update, so ask each bonded device to
+     * repopulate its UUIDs. Runs on the connect thread only: this sleeps.
+     */
+    private fun refreshSdp(adapter: BluetoothAdapter) {
+        val bonded =
+            try {
+                adapter.getBondedDevices()
+            } catch (e: Throwable) {
+                log("bonded refresh " + e.message)
+                return
+            }
+        var fetched = 0
+        for (d in bonded) {
+            if (fetched >= SDP_FETCH_LIMIT) break
+            try {
+                if (d.fetchUuidsWithSdp()) fetched++
+            } catch (e: Throwable) {
+                log("sdp fetch " + e.message)
+            }
+        }
+        log("sdp refresh requested for $fetched devices")
+        if (fetched > 0) sleep(400)
     }
 
     private fun connectRfcomm(device: BluetoothDevice): Boolean {
         var socket: BluetoothSocket? = null
 
         log("rfcomm secure uuid")
-        socket = tryRfcommUuid(device, false)
-        if (socket == null) {
-            log("rfcomm insecure uuid")
-            socket = tryRfcommUuid(device, true)
+        for (uuid in UUID_CANDIDATES) {
+            socket = tryRfcommUuid(device, uuid, false)
+            if (socket == null) {
+                log("rfcomm insecure uuid $uuid")
+                socket = tryRfcommUuid(device, uuid, true)
+            }
+            if (socket != null) break
         }
         if (socket == null) {
             for (channel in 1..30) {
@@ -212,8 +261,14 @@ class BudsConnection(
         }
     }
 
+    /**
+     * Hidden BluetoothDevice methods are reached by name; on newer builds the
+     * reflection machinery can deliver an Error rather than an Exception, so
+     * anything thrown here must be caught, not just failure of one candidate.
+     */
     private fun tryRfcommUuid(
         device: BluetoothDevice,
+        uuid: UUID,
         insecure: Boolean,
     ): BluetoothSocket? =
         try {
@@ -224,14 +279,14 @@ class BudsConnection(
                             "createInsecureRfcommSocketToServiceRecord",
                             UUID::class.java,
                         )
-                    m.invoke(device, SERVICE_UUID) as BluetoothSocket
+                    m.invoke(device, uuid) as BluetoothSocket
                 } else {
-                    device.createRfcommSocketToServiceRecord(SERVICE_UUID)
+                    device.createRfcommSocketToServiceRecord(uuid)
                 }
             socket.connect()
             socket
-        } catch (e: Exception) {
-            log("uuid connect failed " + e.message)
+        } catch (e: Throwable) {
+            log("uuid connect failed $uuid insecure=$insecure " + e.message)
             null
         }
 
@@ -250,8 +305,8 @@ class BudsConnection(
             val socket = m.invoke(device, channel) as BluetoothSocket
             socket.connect()
             socket
-        } catch (e: Exception) {
-            log("channel connect failed " + e.message)
+        } catch (e: Throwable) {
+            log("channel connect failed $channel insecure=$insecure " + e.message)
             null
         }
 
@@ -518,7 +573,10 @@ class BudsConnection(
     companion object {
         private const val TAG = "MotoBuds"
         private val SERVICE_UUID: UUID = UUID.fromString(BudsProtocol.SERVICE_UUID)
-        private val SERVICE_UUID_OLD: UUID = UUID.fromString("00009fe0-4899-11ee-be56-0242ac120002")
+        private val SERVICE_UUID_OLD: UUID = UUID.fromString(BudsProtocol.SERVICE_UUID_OLD)
+        private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb")
+        private val UUID_CANDIDATES = arrayOf(SERVICE_UUID, SERVICE_UUID_OLD, SPP_UUID)
+        private const val SDP_FETCH_LIMIT = 6
         private const val RECONNECT_DELAY_MS = 5000L
     }
 }

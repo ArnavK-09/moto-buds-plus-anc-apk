@@ -3,6 +3,7 @@ package com.arnavk09.motoanc
 import android.Manifest
 import android.app.Activity
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -98,9 +99,23 @@ class MainActivity :
 
     override fun onResume() {
         super.onResume()
-        registerReceiver(btStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
+        registerBtReceiver()
         BudsManager.get(this).addListener(this)
         if (hasPermission()) startConnection()
+    }
+
+    /**
+     * System-broadcast receivers are exempt from the exported-flag requirement,
+     * but newer OS builds grow stricter about it; declaring NOT_EXPORTED
+     * explicitly is valid for protected broadcasts and survives the tightening.
+     */
+    private fun registerBtReceiver() {
+        val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(btStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(btStateReceiver, filter)
+        }
     }
 
     override fun onPause() {
@@ -166,7 +181,7 @@ class MainActivity :
     }
 
     private fun startConnection() {
-        val adapter = BluetoothAdapter.getDefaultAdapter()
+        val adapter = btAdapter()
         if (adapter == null) {
             updateStatus(false)
             statusText.setText(R.string.status_no_device)
@@ -657,6 +672,13 @@ class MainActivity :
 
     @Suppress("DEPRECATION")
     private fun color(resId: Int): Int = resources.getColor(resId, theme)
+
+    private fun btAdapter(): BluetoothAdapter? =
+        try {
+            (getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
+        } catch (ignored: Throwable) {
+            null
+        } ?: BluetoothAdapter.getDefaultAdapter()
 
     companion object {
         private const val PERMISSION_REQUEST = 1
