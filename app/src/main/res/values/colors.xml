@@ -1,14 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="background">#0B0E14</color>
-    <color name="surface">#151922</color>
-    <color name="surface_variant">#1E2330</color>
-    <color name="accent">#5B8DEF</color>
-    <color name="accent_dark">#3A6BCF</color>
-    <color name="text_primary">#FFFFFF</color>
-    <color name="text_secondary">#9AA0A6</color>
-    <color name="text_muted">#5F6368</color>
-    <color name="green">#4ADE80</color>
-    <color name="charging">#FFD600</color>
-    <color name="ic_launcher_background">#0B0E14</color>
+    <color name="background">#09111B</color>
+    <color name="surface">#070E18</color>
+    <color name="surface_variant">#1B2029</color>
+    <color name="accent">#0E77DA</color>
+    <color name="text_primary">#F1EEEB</color>
+    <color name="text_secondary">#DED9D4</color>
+    <color name="text_muted">#A0A3A8</color>
+    <color name="green">#649E64</color>
+    <color name="amber">#ED9A00</color>
+    <color name="ic_launcher_background">#09111B</color>
 </resources>

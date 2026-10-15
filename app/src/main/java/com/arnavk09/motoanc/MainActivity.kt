@@ -2,9 +2,12 @@ package com.arnavk09.motoanc
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -12,10 +15,13 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.PorterDuff
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -25,12 +31,10 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
+import android.widget.Toast
 
-/**
- * Single-screen controller UI, built programmatically: status row, hero image,
- * three battery gauges, and the 2x2 ANC mode grid.
- */
 class MainActivity :
     Activity(),
     BudsConnection.Listener {
@@ -40,10 +44,22 @@ class MainActivity :
     private lateinit var batteryLeftView: BatteryView
     private lateinit var batteryRightView: BatteryView
     private lateinit var batteryCaseView: BatteryView
+    private lateinit var batteryRow: LinearLayout
+    private lateinit var contentHost: FrameLayout
+    private lateinit var detailScreen: View
 
     private val ancCards = arrayOfNulls<LinearLayout>(4)
     private val ancIcons = arrayOfNulls<ImageView>(4)
     private val ancLabels = arrayOfNulls<TextView>(4)
+    private val configState = HashMap<String, Boolean>()
+    private val configKnown = HashSet<String>()
+    private val configSwitches = HashMap<String, Switch>()
+    private val configStatusLabels = HashMap<String, TextView>()
+    private val configStatusSpinners = HashMap<String, ProgressBar>()
+    private val gestureActions = HashMap<String, Int>()
+    private val gestureActionViews = HashMap<String, TextView>()
+    private val ringSwitches = HashMap<Int, Switch>()
+    private var updatingConfig = false
 
     private lateinit var prefs: SharedPreferences
     private var currentAnc = BudsProtocol.ANC_OFF
@@ -51,6 +67,31 @@ class MainActivity :
     private var isSynced = false
     private var requestedEnable = false
     private var case100Count = 0
+    private var bondLost = false
+    private var activeSettingsPage: String? = null
+    private var gestureSide = 0
+    private var pullStartY = 0f
+    private var pollCount = 0
+    private val configPollHandler = Handler(Looper.getMainLooper())
+    private val ringHandler = Handler(Looper.getMainLooper())
+    private val ringTimeout = Runnable { stopRingBuds() }
+    private var ringLeft = false
+    private var ringRight = false
+    private val configPoll =
+        object : Runnable {
+            override fun run() {
+                if (isConnected) {
+                    val manager = BudsManager.get(this@MainActivity)
+                    manager.queryAnc()
+                    pollCount++
+                    if (pollCount % CONFIG_GROUP_POLL_EVERY == 0) {
+                        manager.queryConfigs()
+                        manager.queryGestures()
+                    }
+                }
+                configPollHandler.postDelayed(this, CONFIG_POLL_MS)
+            }
+        }
     private val btStateReceiver: BroadcastReceiver = BtStateReceiver(this)
 
     private class BtStateReceiver(
@@ -77,31 +118,73 @@ class MainActivity :
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = color(R.color.background)
-        val root = LinearLayout(this)
-        root.orientation = LinearLayout.VERTICAL
-        root.setBackgroundColor(color(R.color.background))
-        root.setPadding(20.dp(), 28.dp(), 20.dp(), 28.dp())
-        root.fitsSystemWindows = true
-        root.addView(createToolbar())
-        root.addView(createStatusRow())
-        root.addView(createHero())
-        root.addView(createBatteryRow())
-        root.addView(createAncGrid())
-        val scroll = ScrollView(this)
-        scroll.addView(root)
-        setContentView(scroll)
         prefs = getSharedPreferences("buds", Context.MODE_PRIVATE)
         currentAnc = prefs.getInt("anc_mode", BudsProtocol.ANC_OFF)
+        loadGestureCache()
+        contentHost = FrameLayout(this)
+        contentHost.setBackgroundColor(color(R.color.background))
+        detailScreen = createDetailScreen()
+        contentHost.addView(detailScreen)
+        setContentView(contentHost)
         loadBattery()
         updateAnc()
         checkPermission()
     }
 
+    private fun createDetailScreen(): View {
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+        root.setBackgroundColor(color(R.color.background))
+        root.setPadding(20.dp(), 12.dp(), 20.dp(), 24.dp())
+        root.fitsSystemWindows = true
+        root.addView(createToolbar())
+        root.addView(createStatusRow())
+        val scroll = ScrollView(this)
+        scroll.clipToPadding = false
+        val body = LinearLayout(this)
+        body.orientation = LinearLayout.VERTICAL
+        body.addView(createHero())
+        batteryRow = createBatteryRow()
+        batteryRow.visibility = if (isConnected) View.VISIBLE else View.GONE
+        body.addView(batteryRow)
+        body.addView(createAncGrid())
+        body.addView(createConfigSection())
+        scroll.addView(body)
+        scroll.isFillViewport = true
+        scroll.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    pullStartY = event.y
+                    false
+                }
+
+                MotionEvent.ACTION_UP -> {
+                    val pulled = event.y - pullStartY
+                    if (scroll.scrollY == 0 && pulled > 84.dp()) {
+                        reload()
+                        true
+                    } else {
+                        false
+                    }
+                }
+
+                else -> {
+                    false
+                }
+            }
+        }
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        return root
+    }
+
     override fun onResume() {
         super.onResume()
+        BudsLog.d("activity resume")
         registerBtReceiver()
         BudsManager.get(this).addListener(this)
         if (hasPermission()) startConnection()
+        configPollHandler.removeCallbacks(configPoll)
+        configPollHandler.postDelayed(configPoll, CONFIG_POLL_MS)
     }
 
     /**
@@ -120,6 +203,9 @@ class MainActivity :
 
     override fun onPause() {
         super.onPause()
+        BudsLog.d("activity pause")
+        configPollHandler.removeCallbacks(configPoll)
+        stopRingBuds()
         try {
             unregisterReceiver(btStateReceiver)
         } catch (ignored: Exception) {
@@ -208,18 +294,26 @@ class MainActivity :
     override fun onConnected() {
         isConnected = true
         isSynced = false
+        bondLost = false
         updateStatus(true)
+        runOnUiThread {
+            batteryRow.visibility = View.VISIBLE
+            updateBattery(loadBattery("left"), loadBattery("right"), loadBattery("case"))
+        }
+        runOnUiThread { updateConfigAvailability() }
     }
 
     override fun onDisconnected() {
         isConnected = false
         isSynced = false
+        ringLeft = false
+        ringRight = false
+        ringHandler.removeCallbacks(ringTimeout)
         updateStatus(false)
-        updateBattery(
-            BudsProtocol.Battery(0, false, false),
-            BudsProtocol.Battery(0, false, false),
-            BudsProtocol.Battery(0, false, false),
-        )
+        runOnUiThread {
+            batteryRow.visibility = View.GONE
+            updateConfigAvailability()
+        }
     }
 
     override fun onBattery(
@@ -245,21 +339,607 @@ class MainActivity :
         updateAnc()
     }
 
+    override fun onConfig(
+        key: String,
+        on: Boolean,
+    ) {
+        configState[key] = on
+        configKnown.add(key)
+        runOnUiThread {
+            updatingConfig = true
+            configSwitches[key]?.let {
+                it.isChecked = on
+                it.isEnabled = isConnected && supportedConfig(key)
+            }
+            configStatusLabels[key]?.text = officialFeatureSubtitle(key)
+            configStatusSpinners[key]?.visibility = View.GONE
+            updatingConfig = false
+        }
+    }
+
+    override fun onGesture(
+        side: Int,
+        index: Int,
+        action: Int,
+    ) {
+        if (side !in 0..1 || index !in 1..3) return
+        val key = gestureKey(side, index)
+        gestureActions[key] = action
+        prefs.edit().putInt(key, action).apply()
+        runOnUiThread { updateGestureActionView(key) }
+    }
+
+    private fun updateConfigAvailability() {
+        for ((key, view) in configSwitches) {
+            view.isEnabled = isConnected && supportedConfig(key)
+            configStatusLabels[key]?.text =
+                when {
+                    !isConnected -> "Connect to sync"
+                    !configKnown.contains(key) -> "Syncing…"
+                    else -> officialFeatureSubtitle(key)
+                }
+            configStatusSpinners[key]?.visibility =
+                if (isConnected && !configKnown.contains(key)) View.VISIBLE else View.GONE
+        }
+    }
+
+    private fun createConfigSection(): LinearLayout {
+        val section = LinearLayout(this)
+        section.orientation = LinearLayout.VERTICAL
+        section.layoutParams = marginBottom(24.dp())
+        section.addView(categoryCards())
+        section.addView(sectionHeading("Connected"))
+        val settings = LinearLayout(this)
+        settings.orientation = LinearLayout.VERTICAL
+        settings.background = roundedSurface(28.dp())
+        settings.setPadding(16.dp(), 4.dp(), 16.dp(), 4.dp())
+        val connectedKeys = listOf("ineardetect", "dual")
+        for ((index, key) in connectedKeys.withIndex()) {
+            val item = BudsConfig.forKey(key) ?: continue
+            settings.addView(configRow(item))
+            if (index != connectedKeys.lastIndex) settings.addView(divider())
+        }
+        section.addView(settings, marginBottom(20.dp()))
+        return section
+    }
+
+    private fun categoryCards(): LinearLayout {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.layoutParams = marginBottom(24.dp())
+        row.addView(categoryCard("Sound", R.drawable.official_sound) { openSettingsPage("Sound", "sound") })
+        row.addView(categoryCard("Gestures", R.drawable.official_gesture) { openSettingsPage("Gestures", "gestures") })
+        row.addView(categoryCard("Find", R.drawable.official_find) { openSettingsPage("Find", "more") })
+        return row
+    }
+
+    private fun categoryCard(
+        title: String,
+        iconRes: Int,
+        onClick: () -> Unit,
+    ): View {
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.VERTICAL
+        card.gravity = Gravity.CENTER
+        card.background = roundedSurface(28.dp())
+        card.setPadding(5.dp(), 15.dp(), 5.dp(), 15.dp())
+        val params = LinearLayout.LayoutParams(0, 96.dp(), 1f)
+        params.marginEnd = 6.dp()
+        card.layoutParams = params
+        val icon = ImageView(this)
+        icon.setImageResource(iconRes)
+        icon.setColorFilter(color(R.color.text_primary))
+        card.addView(icon, LinearLayout.LayoutParams(26.dp(), 26.dp()))
+        val label = TextView(this)
+        label.text = title
+        label.setTextColor(color(R.color.text_primary))
+        label.setTextSize(12f)
+        label.typeface = Typeface.DEFAULT_BOLD
+        label.gravity = Gravity.CENTER
+        label.maxLines = 2
+        label.includeFontPadding = false
+        val labelParams = marginTop(8.dp())
+        card.addView(label, labelParams)
+        card.isClickable = true
+        card.isFocusable = true
+        addClickEffect(card)
+        addRipple(card)
+        card.setOnClickListener { onClick() }
+        return card
+    }
+
+    private fun openSettingsPage(
+        title: String,
+        group: String,
+    ) {
+        if (activeSettingsPage == "more" && group != "more") stopRingBuds()
+        activeSettingsPage = group
+        configSwitches.clear()
+        configStatusLabels.clear()
+        configStatusSpinners.clear()
+        ringSwitches.clear()
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+        root.setBackgroundColor(color(R.color.background))
+        root.setPadding(20.dp(), 12.dp(), 20.dp(), 24.dp())
+        root.fitsSystemWindows = true
+        root.addView(settingsToolbar(title))
+        val scroll = ScrollView(this)
+        scroll.clipToPadding = false
+        scroll.isFillViewport = true
+        val body = LinearLayout(this)
+        body.orientation = LinearLayout.VERTICAL
+        body.setPadding(0, 0, 0, 0)
+        when (group) {
+            "sound" -> {
+                addFeatureGroup(body, listOf("hires", "game", "volboost"))
+            }
+
+            "more" -> {
+                addRingBudsControls(body)
+            }
+
+            else -> {
+                addGestureSettings(body)
+            }
+        }
+        scroll.addView(body)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        contentHost.removeAllViews()
+        root.alpha = 0f
+        root.translationX = 12.dp().toFloat()
+        contentHost.addView(root)
+        root
+            .animate()
+            .alpha(1f)
+            .translationX(0f)
+            .setDuration(180L)
+            .start()
+    }
+
+    private fun settingsToolbar(title: String): View {
+        val bar = LinearLayout(this)
+        bar.orientation = LinearLayout.HORIZONTAL
+        bar.gravity = Gravity.CENTER_VERTICAL
+        bar.layoutParams = marginBottom(8.dp())
+        val backTarget = FrameLayout(this)
+        backTarget.contentDescription = "Back"
+        backTarget.isClickable = true
+        backTarget.isFocusable = true
+        backTarget.setOnClickListener { showDetails() }
+        val back = ImageView(this)
+        back.setImageResource(R.drawable.official_back)
+        back.setColorFilter(color(R.color.text_primary))
+        val backIconParams = FrameLayout.LayoutParams(20.dp(), 20.dp(), Gravity.START or Gravity.CENTER_VERTICAL)
+        backTarget.addView(back, backIconParams)
+        bar.addView(backTarget, LinearLayout.LayoutParams(40.dp(), 40.dp()))
+        val heading = TextView(this)
+        heading.text = title
+        heading.setTextColor(color(R.color.text_primary))
+        heading.setTextSize(18f)
+        heading.typeface = Typeface.DEFAULT
+        val p = LinearLayout.LayoutParams(0, -2, 1f)
+        p.marginStart = (-8).dp()
+        bar.addView(heading, p)
+        return bar
+    }
+
+    @Deprecated("Deprecated in Android API; delegated to the system back dispatcher by Activity")
+    override fun onBackPressed() {
+        if (activeSettingsPage != null) {
+            showDetails()
+        } else {
+            super.onBackPressed()
+        }
+    }
+
+    private fun showDetails() {
+        if (activeSettingsPage == "more") stopRingBuds()
+        activeSettingsPage = null
+        configSwitches.clear()
+        configStatusLabels.clear()
+        configStatusSpinners.clear()
+        detailScreen = createDetailScreen()
+        detailScreen.alpha = 0f
+        detailScreen.translationX = -12.dp().toFloat()
+        contentHost.removeAllViews()
+        contentHost.addView(detailScreen)
+        detailScreen
+            .animate()
+            .alpha(1f)
+            .translationX(0f)
+            .setDuration(180L)
+            .start()
+        batteryRow.visibility = if (isConnected) View.VISIBLE else View.GONE
+        updateStatus(isConnected)
+        updateConfigAvailability()
+        updateBattery(loadBattery("left"), loadBattery("right"), loadBattery("case"))
+        updateAnc()
+    }
+
+    private fun addFeatureGroup(
+        parent: LinearLayout,
+        keys: List<String>,
+    ) {
+        val panel = LinearLayout(this)
+        panel.orientation = LinearLayout.VERTICAL
+        panel.background = roundedSurface(24.dp())
+        panel.setPadding(16.dp(), 4.dp(), 16.dp(), 4.dp())
+        for ((index, key) in keys.withIndex()) {
+            val item = BudsConfig.forKey(key) ?: continue
+            panel.addView(configRow(item))
+            if (index != keys.lastIndex) panel.addView(divider())
+        }
+        parent.addView(panel, marginBottom(20.dp()))
+    }
+
+    private fun addRingBudsControls(parent: LinearLayout) {
+        val panel = LinearLayout(this)
+        panel.orientation = LinearLayout.VERTICAL
+        panel.background = roundedSurface(24.dp())
+        panel.setPadding(16.dp(), 4.dp(), 16.dp(), 4.dp())
+        panel.addView(ringRow(0, "Left earbud"))
+        panel.addView(divider())
+        panel.addView(ringRow(1, "Right earbud"))
+        parent.addView(panel)
+    }
+
+    private fun ringRow(
+        side: Int,
+        title: String,
+    ): View {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER_VERTICAL
+        row.setPadding(0, 10.dp(), 0, 10.dp())
+        val label = TextView(this)
+        label.text = title
+        label.setTextColor(color(R.color.text_primary))
+        label.setTextSize(14f)
+        label.layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+        row.addView(label)
+        val toggle = Switch(this)
+        toggle.isChecked = if (side == 0) ringLeft else ringRight
+        toggle.isEnabled = isConnected
+        toggle.setOnCheckedChangeListener { _, checked ->
+            if (!isConnected) {
+                toggle.isChecked = false
+                return@setOnCheckedChangeListener
+            }
+            if (side == 0) ringLeft = checked else ringRight = checked
+            sendRingState()
+        }
+        ringSwitches[side] = toggle
+        row.addView(toggle)
+        return row
+    }
+
+    private fun sendRingState() {
+        ringHandler.removeCallbacks(ringTimeout)
+        if (!isConnected) {
+            ringLeft = false
+            ringRight = false
+            updateRingSwitches()
+            return
+        }
+        BudsManager.get(this).setRingBuds(ringLeft, ringRight)
+        if (ringLeft || ringRight) ringHandler.postDelayed(ringTimeout, RING_TIMEOUT_MS)
+    }
+
+    private fun stopRingBuds() {
+        ringHandler.removeCallbacks(ringTimeout)
+        val wasRinging = ringLeft || ringRight
+        ringLeft = false
+        ringRight = false
+        if (wasRinging && isConnected) BudsManager.get(this).setRingBuds(false, false)
+        updateRingSwitches()
+    }
+
+    private fun updateRingSwitches() {
+        ringSwitches[0]?.let {
+            it.isChecked = ringLeft
+            it.isEnabled = isConnected
+        }
+        ringSwitches[1]?.let {
+            it.isChecked = ringRight
+            it.isEnabled = isConnected
+        }
+    }
+
+    private fun addGestureSettings(parent: LinearLayout) {
+        val sides = LinearLayout(this)
+        sides.orientation = LinearLayout.HORIZONTAL
+        sides.background = roundedSurface(22.dp())
+        sides.setPadding(4.dp(), 4.dp(), 4.dp(), 4.dp())
+        sides.layoutParams = marginBottom(16.dp())
+        for (side in 0..1) {
+            val tab = TextView(this)
+            tab.text = if (side == 0) "Left" else "Right"
+            tab.gravity = Gravity.CENTER
+            tab.setTextSize(13f)
+            tab.typeface = Typeface.DEFAULT_BOLD
+            tab.setPadding(8.dp(), 10.dp(), 8.dp(), 10.dp())
+            tab.background = roundedSurface(18.dp())
+            tab.setTextColor(color(R.color.text_secondary))
+            if (side == gestureSide) {
+                tab.background = ancCardBg(true)
+                tab.setTextColor(color(R.color.background))
+            }
+            val params = LinearLayout.LayoutParams(0, 42.dp(), 1f)
+            if (side == 0) params.marginEnd = 4.dp()
+            sides.addView(tab, params)
+            tab.setOnClickListener {
+                if (gestureSide != side) {
+                    gestureSide = side
+                    openSettingsPage("Gestures", "gestures")
+                }
+            }
+        }
+        parent.addView(sides)
+        val panel = LinearLayout(this)
+        panel.orientation = LinearLayout.VERTICAL
+        panel.background = roundedSurface(24.dp())
+        panel.setPadding(16.dp(), 4.dp(), 16.dp(), 4.dp())
+        val gestureTypes = listOf(1 to "Double press", 2 to "Triple press", 3 to "Long press")
+        for ((position, gesture) in gestureTypes.withIndex()) {
+            panel.addView(gestureActionRow(gesture.first, gesture.second))
+            if (position < gestureTypes.lastIndex) panel.addView(divider())
+        }
+        parent.addView(panel)
+    }
+
+    private fun gestureActionRow(
+        index: Int,
+        title: String,
+    ): View {
+        val key = gestureKey(gestureSide, index)
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER_VERTICAL
+        row.setPadding(0, 12.dp(), 0, 12.dp())
+        val copy = LinearLayout(this)
+        copy.orientation = LinearLayout.VERTICAL
+        copy.layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+        val heading = TextView(this)
+        heading.text = title
+        heading.setTextColor(color(R.color.text_primary))
+        heading.setTextSize(14f)
+        copy.addView(heading)
+        val action = TextView(this)
+        action.setTextColor(color(R.color.text_secondary))
+        action.setTextSize(12f)
+        action.layoutParams = marginTop(4.dp())
+        gestureActionViews[key] = action
+        updateGestureActionView(key)
+        copy.addView(action)
+        row.addView(copy)
+        val chooser = TextView(this)
+        chooser.text = "›"
+        chooser.setTextColor(color(R.color.text_secondary))
+        chooser.setTextSize(22f)
+        row.addView(chooser, LinearLayout.LayoutParams(32.dp(), 40.dp()))
+        row.isClickable = true
+        row.isFocusable = true
+        row.setOnClickListener { chooseGestureAction(key, title) }
+        return row
+    }
+
+    private fun chooseGestureAction(
+        key: String,
+        title: String,
+    ) {
+        if (!isConnected) return
+        val choices = gestureChoices()
+        val labels = choices.map { it.second }.toTypedArray()
+        val current = gestureActions[key] ?: 0
+        AlertDialog
+            .Builder(this)
+            .setTitle(title)
+            .setSingleChoiceItems(labels, choices.indexOfFirst { it.first == current }) { dialog, which ->
+                val action = choices[which].first
+                val parts = key.split(":")
+                val side = parts[0].toInt()
+                val index = parts[1].toInt()
+                gestureActions[key] = action
+                prefs.edit().putInt(key, action).apply()
+                updateGestureActionView(key)
+                BudsManager.get(this).setGesture(side, index, action)
+                BudsManager.get(this).queryGestures()
+                dialog.dismiss()
+            }.setNegativeButton(R.string.action_close, null)
+            .show()
+    }
+
+    private fun gestureChoices(): List<Pair<Int, String>> =
+        listOf(
+            0 to "Off",
+            1 to "Play / Pause",
+            2 to "Previous",
+            3 to "Next",
+            4 to "Voice Assistant",
+            5 to "None",
+            7 to "ANC on / off",
+            8 to "Transparency off",
+            9 to "ANC / transparency",
+            10 to "Cycle noise control",
+            11 to "Volume up",
+            12 to "Volume down",
+        )
+
+    private fun gestureKey(
+        side: Int,
+        index: Int,
+    ): String = "$side:$index"
+
+    private fun loadGestureCache() {
+        for (side in 0..1) {
+            for (index in 1..3) {
+                val key = gestureKey(side, index)
+                if (prefs.contains(key)) gestureActions[key] = prefs.getInt(key, 0)
+            }
+        }
+    }
+
+    private fun updateGestureActionView(key: String) {
+        val view = gestureActionViews[key] ?: return
+        val action = gestureActions[key]
+        view.text =
+            if (action == null) {
+                "Syncing…"
+            } else {
+                gestureChoices().firstOrNull { it.first == action }?.second ?: "Unknown action"
+            }
+    }
+
+    private fun sectionHeading(text: String): TextView {
+        val heading = TextView(this)
+        heading.text = text
+        heading.setTextColor(color(R.color.text_primary))
+        heading.setTextSize(16f)
+        heading.typeface = Typeface.DEFAULT_BOLD
+        heading.layoutParams = marginBottom(12.dp())
+        return heading
+    }
+
+    private fun roundedSurface(radius: Int): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(color(R.color.surface_variant))
+            cornerRadius = radius.toFloat()
+        }
+
+    private fun divider(): View =
+        View(this).apply {
+            setBackgroundColor(color(R.color.surface))
+            layoutParams = LinearLayout.LayoutParams(-1, 1)
+        }
+
+    private fun configRow(f: BudsConfig.Feature): LinearLayout {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER_VERTICAL
+        row.setPadding(0, 12.dp(), 0, 12.dp())
+
+        val copy = LinearLayout(this)
+        copy.orientation = LinearLayout.VERTICAL
+        copy.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        val label = TextView(this)
+        label.text = officialFeatureLabel(f)
+        label.setTextColor(color(R.color.text_primary))
+        label.setTextSize(14f)
+        label.maxLines = 2
+        copy.addView(label)
+        val subtitleText = officialFeatureSubtitle(f.key)
+        if (subtitleText.isNotEmpty() || !configKnown.contains(f.key)) {
+            val statusLine = LinearLayout(this)
+            statusLine.orientation = LinearLayout.HORIZONTAL
+            statusLine.gravity = Gravity.CENTER_VERTICAL
+            val subtitle = TextView(this)
+            subtitle.text =
+                when {
+                    !isConnected -> "Connect to sync"
+                    !configKnown.contains(f.key) -> "Syncing…"
+                    else -> subtitleText
+                }
+            subtitle.setTextColor(color(R.color.text_secondary))
+            subtitle.setTextSize(12f)
+            val spinner = ProgressBar(this, null, android.R.attr.progressBarStyleSmall)
+            spinner.isIndeterminate = true
+            spinner.indeterminateDrawable.setColorFilter(color(R.color.text_secondary), PorterDuff.Mode.SRC_IN)
+            spinner.visibility = if (isConnected && !configKnown.contains(f.key)) View.VISIBLE else View.GONE
+            val spinnerParams = LinearLayout.LayoutParams(14.dp(), 14.dp())
+            spinnerParams.marginEnd = 6.dp()
+            statusLine.addView(spinner, spinnerParams)
+            statusLine.addView(subtitle)
+            val subParams = marginTop(4.dp())
+            copy.addView(statusLine, subParams)
+            configStatusLabels[f.key] = subtitle
+            configStatusSpinners[f.key] = spinner
+        }
+        row.addView(copy)
+
+        val sw = Switch(this)
+        sw.isChecked = configState[f.key] == true
+        sw.isEnabled = isConnected && supportedConfig(f.key)
+        sw.contentDescription = "${officialFeatureLabel(f)} switch"
+        sw.setOnCheckedChangeListener { _, checked ->
+            if (updatingConfig) return@setOnCheckedChangeListener
+            if (!isConnected) {
+                updatingConfig = true
+                sw.isChecked = !checked
+                updatingConfig = false
+                return@setOnCheckedChangeListener
+            }
+            configState[f.key] = checked
+            BudsManager.get(this).setConfig(f.key, checked)
+        }
+        configSwitches[f.key] = sw
+        configStatusLabels[f.key]?.text =
+            when {
+                !isConnected -> "Connect to sync"
+                !configKnown.contains(f.key) -> "Syncing…"
+                else -> officialFeatureSubtitle(f.key)
+            }
+        row.addView(sw)
+        return row
+    }
+
+    private fun officialFeatureLabel(feature: BudsConfig.Feature): String =
+        when (feature.key) {
+            "hires" -> "Hi-Res Mode"
+            "game" -> "Game mode"
+            "volboost" -> "Volume boost"
+            "ineardetect" -> "In-ear Detection"
+            "dual" -> "Dual connection"
+            else -> feature.label
+        }
+
+    private fun officialFeatureSubtitle(key: String): String =
+        when (key) {
+            "hires" -> "Play audio in high resolution"
+            "game" -> "Reduce audio latency while gaming"
+            "volboost" -> "Increase the maximum volume"
+            "ineardetect" -> "Play when inserted; pause when removed"
+            "dual" -> "Connect to a second device"
+            else -> ""
+        }
+
+    private fun supportedConfig(key: String): Boolean = key in setOf("hires", "game", "volboost", "ineardetect", "dual")
+
+    override fun onStatus(text: String) {
+        runOnUiThread {
+            if (bondLost) return@runOnUiThread
+            statusText.text = text
+            statusText.setTextColor(color(R.color.text_secondary))
+            statusDot.setTextColor(color(R.color.text_muted))
+        }
+    }
+
+    override fun onBondLost() {
+        runOnUiThread {
+            bondLost = true
+            isSynced = false
+            statusText.setText(R.string.status_bond_lost)
+            statusText.setTextColor(color(R.color.amber))
+            statusDot.setTextColor(color(R.color.amber))
+            syncSpinner.visibility = View.GONE
+        }
+    }
+
     private fun createToolbar(): LinearLayout {
         val bar = LinearLayout(this)
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
-        bar.layoutParams = marginBottom(16.dp())
+        bar.layoutParams = marginBottom(12.dp())
 
         val icon = ImageView(this)
         icon.setImageResource(R.drawable.ic_earbuds)
         icon.setColorFilter(color(R.color.text_primary))
-        icon.layoutParams = LinearLayout.LayoutParams(28.dp(), 28.dp())
+        icon.layoutParams = LinearLayout.LayoutParams(24.dp(), 24.dp())
 
         val title = TextView(this)
         title.setText(R.string.app_title)
         title.setTextColor(color(R.color.text_primary))
-        title.setTextSize(20f)
+        title.setTextSize(18f)
         title.gravity = Gravity.START
         val titleParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         titleParams.marginStart = 12.dp()
@@ -267,7 +947,35 @@ class MainActivity :
 
         bar.addView(icon)
         bar.addView(title)
+        bar.addView(
+            toolbarAction(R.drawable.official_log, R.string.action_logs) {
+                showLogs()
+            },
+        )
         return bar
+    }
+
+    private fun toolbarAction(
+        iconRes: Int,
+        labelRes: Int,
+        onClick: () -> Unit,
+    ): ImageView {
+        val view = ImageView(this)
+        view.setImageResource(iconRes)
+        view.setColorFilter(color(R.color.text_primary))
+        val params = LinearLayout.LayoutParams(40.dp(), 40.dp())
+        params.marginStart = 4.dp()
+        view.layoutParams = params
+        view.setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
+        view.contentDescription = getString(labelRes)
+        view.isClickable = true
+        view.isFocusable = true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            view.foreground = RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null, null)
+        }
+        addClickEffect(view)
+        view.setOnClickListener { onClick() }
+        return view
     }
 
     private fun createStatusRow(): LinearLayout {
@@ -286,6 +994,10 @@ class MainActivity :
         statusText.setTextColor(color(R.color.text_secondary))
         statusText.setTextSize(13f)
         statusText.setPadding(6.dp(), 0, 0, 0)
+
+        val openSettings = View.OnClickListener { if (bondLost) showBondDialog() }
+        statusDot.setOnClickListener(openSettings)
+        statusText.setOnClickListener(openSettings)
 
         val spacer = TextView(this)
         spacer.layoutParams = LinearLayout.LayoutParams(0, 0, 1f)
@@ -312,32 +1024,29 @@ class MainActivity :
         row.addView(spacer)
         row.addView(syncSpinner)
         row.addView(bose)
+        if (bondLost) {
+            statusText.setText(R.string.status_bond_lost)
+            statusText.setTextColor(color(R.color.amber))
+            statusDot.setTextColor(color(R.color.amber))
+        } else {
+            updateStatus(isConnected)
+        }
         return row
     }
 
     private fun createHero(): FrameLayout {
         val frame = FrameLayout(this)
         frame.layoutParams =
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 300.dp())
-        frame.setPadding(0, 16.dp(), 0, 16.dp())
-
-        val circle = View(this)
-        val oval = GradientDrawable()
-        oval.shape = GradientDrawable.OVAL
-        oval.setColor(color(R.color.surface_variant))
-        circle.background = oval
-        val circleParams = FrameLayout.LayoutParams(260.dp(), 260.dp())
-        circleParams.gravity = Gravity.CENTER
-        circle.layoutParams = circleParams
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 284.dp())
+        frame.setPadding(0, 0, 0, 4.dp())
 
         val icon = ImageView(this)
-        icon.setImageResource(R.drawable.hero_earbuds)
+        icon.setImageResource(R.drawable.official_buds_case)
         icon.scaleType = ImageView.ScaleType.CENTER_INSIDE
-        val iconParams = FrameLayout.LayoutParams(240.dp(), 240.dp())
+        val iconParams = FrameLayout.LayoutParams(284.dp(), 284.dp())
         iconParams.gravity = Gravity.CENTER
         icon.layoutParams = iconParams
 
-        frame.addView(circle)
         frame.addView(icon)
         return frame
     }
@@ -347,7 +1056,7 @@ class MainActivity :
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.CENTER
         row.weightSum = 3f
-        row.layoutParams = marginBottom(8.dp())
+        row.layoutParams = marginBottom(16.dp())
 
         row.addView(batteryItem(R.string.battery_left, 0))
         row.addView(batteryItem(R.string.battery_case, 1))
@@ -361,15 +1070,23 @@ class MainActivity :
     ): LinearLayout {
         val col = LinearLayout(this)
         col.orientation = LinearLayout.VERTICAL
-        col.gravity = Gravity.CENTER_HORIZONTAL
+        col.gravity = Gravity.CENTER
         val colParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        colParams.setMargins(6.dp(), 0, 6.dp(), 0)
+        colParams.setMargins(3.dp(), 0, 3.dp(), 0)
         col.layoutParams = colParams
-        col.setPadding(8.dp(), 0, 8.dp(), 0)
+        col.setPadding(4.dp(), 8.dp(), 4.dp(), 8.dp())
+        col.background = roundedSurface(18.dp())
         addClickEffect(col)
 
         val bv = BatteryView(this)
-        bv.layoutParams = LinearLayout.LayoutParams(90.dp(), 90.dp())
+        bv.layoutParams = LinearLayout.LayoutParams(44.dp(), 56.dp())
+        bv.setCenterIcon(
+            when (index) {
+                0 -> R.drawable.official_left_bud
+                1 -> R.drawable.official_case
+                else -> R.drawable.official_right_bud
+            },
+        )
         bv.setColors(
             color(R.color.accent),
             color(R.color.surface_variant),
@@ -386,9 +1103,9 @@ class MainActivity :
         val tv = TextView(this)
         tv.setText(labelRes)
         tv.setTextColor(color(R.color.text_secondary))
-        tv.setTextSize(13f)
+        tv.setTextSize(11f)
         tv.gravity = Gravity.CENTER
-        tv.layoutParams = marginTop(10.dp())
+        tv.layoutParams = marginTop(2.dp())
 
         col.addView(bv)
         col.addView(tv)
@@ -398,44 +1115,60 @@ class MainActivity :
     private fun createAncGrid(): LinearLayout {
         val section = LinearLayout(this)
         section.orientation = LinearLayout.VERTICAL
-        section.layoutParams = marginBottom(16.dp())
+        section.layoutParams = marginBottom(20.dp())
 
         val header = TextView(this)
         header.setText(R.string.noise_control)
         header.setTextColor(color(R.color.text_primary))
-        header.setTextSize(16f)
-        header.layoutParams = marginBottom(12.dp())
+        header.setTextSize(18f)
+        header.typeface = Typeface.DEFAULT_BOLD
+        header.layoutParams = marginBottom(14.dp())
         section.addView(header)
 
-        val grid = LinearLayout(this)
-        grid.orientation = LinearLayout.VERTICAL
-        grid.addView(ancRow(0, 1))
-        grid.addView(ancRow(2, 3))
-        section.addView(grid)
+        val modes = LinearLayout(this)
+        modes.orientation = LinearLayout.HORIZONTAL
+        modes.weightSum = 4f
+        modes.setPadding(0, 4.dp(), 0, 4.dp())
+        for (mode in ANC_DISPLAY_ORDER) modes.addView(ancCard(mode))
+        section.addView(modes)
+
+        val labels = LinearLayout(this)
+        labels.orientation = LinearLayout.HORIZONTAL
+        labels.weightSum = 4f
+        for (mode in ANC_DISPLAY_ORDER) {
+            val label = TextView(this)
+            label.setText(ancLabelRes(mode))
+            label.setTextColor(color(R.color.text_secondary))
+            label.setTextSize(10f)
+            label.gravity = Gravity.CENTER
+            label.maxLines = 2
+            label.setPadding(2.dp(), 7.dp(), 2.dp(), 0)
+            ancLabels[mode] = label
+            labels.addView(label, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        section.addView(labels)
         return section
     }
 
-    private fun ancRow(
-        a: Int,
-        b: Int,
-    ): LinearLayout {
-        val row = LinearLayout(this)
-        row.orientation = LinearLayout.HORIZONTAL
-        row.weightSum = 2f
-        row.addView(ancCard(a))
-        row.addView(ancCard(b))
-        return row
-    }
+    private fun ancLabelRes(mode: Int): Int =
+        when (mode) {
+            BudsProtocol.ANC_TRANSPARENCY -> R.string.anc_transparency
+            BudsProtocol.ANC_ANC -> R.string.anc_anc
+            BudsProtocol.ANC_ADAPTIVE -> R.string.anc_adaptive
+            else -> R.string.anc_off
+        }
 
     private fun ancCard(mode: Int): LinearLayout {
         val card = LinearLayout(this)
         card.orientation = LinearLayout.VERTICAL
         card.gravity = Gravity.CENTER
-        card.background = ancCardBg(false)
-        val p = LinearLayout.LayoutParams(0, 140.dp(), 1f)
-        p.setMargins(6.dp(), 6.dp(), 6.dp(), 6.dp())
+        card.background = ancCardBg(mode == currentAnc)
+        val p = LinearLayout.LayoutParams(0, 58.dp(), 1f)
+        p.setMargins(3.dp(), 1.dp(), 3.dp(), 1.dp())
         card.layoutParams = p
-        card.setPadding(12.dp(), 16.dp(), 12.dp(), 16.dp())
+        card.setPadding(3.dp(), 4.dp(), 3.dp(), 4.dp())
+        card.isEnabled = isConnected
+        card.alpha = if (isConnected) 1f else 0.45f
 
         val icons =
             intArrayOf(
@@ -444,31 +1177,15 @@ class MainActivity :
                 R.drawable.ic_anc_on,
                 R.drawable.ic_adaptive,
             )
-        val names =
-            intArrayOf(
-                R.string.anc_off,
-                R.string.anc_transparency,
-                R.string.anc_anc,
-                R.string.anc_adaptive,
-            )
-
         val icon = ImageView(this)
         icon.setImageResource(icons[mode])
-        icon.setColorFilter(color(R.color.text_primary))
-        icon.layoutParams = LinearLayout.LayoutParams(40.dp(), 40.dp())
-
-        val label = TextView(this)
-        label.text = getString(names[mode])
-        label.setTextColor(color(R.color.text_primary))
-        label.setTextSize(13f)
-        label.gravity = Gravity.CENTER
-        label.layoutParams = marginTop(14.dp())
-
+        icon.setColorFilter(if (mode == currentAnc) color(R.color.background) else color(R.color.text_primary))
+        icon.layoutParams = LinearLayout.LayoutParams(26.dp(), 26.dp())
         card.addView(icon)
-        card.addView(label)
         addClickEffect(card)
         addRipple(card)
         card.setOnClickListener {
+            if (!isConnected) return@setOnClickListener
             currentAnc = mode
             updateAnc()
             BudsManager.get(this).sendAncMode(mode)
@@ -476,7 +1193,6 @@ class MainActivity :
 
         ancCards[mode] = card
         ancIcons[mode] = icon
-        ancLabels[mode] = label
         return card
     }
 
@@ -509,11 +1225,7 @@ class MainActivity :
     }
 
     private fun loadBattery() {
-        updateBattery(
-            BudsProtocol.Battery(0, false, false),
-            BudsProtocol.Battery(0, false, false),
-            BudsProtocol.Battery(0, false, false),
-        )
+        updateBattery(loadBattery("left"), loadBattery("right"), loadBattery("case"))
     }
 
     private fun loadBattery(key: String): BudsProtocol.Battery {
@@ -595,13 +1307,11 @@ class MainActivity :
         runOnUiThread {
             for (i in 0 until 4) {
                 val sel = i == currentAnc
-                ancCards[i]!!.background = ancCardBg(sel)
-                ancIcons[i]!!.setColorFilter(
-                    if (sel) color(R.color.background) else color(R.color.text_primary),
-                )
-                ancLabels[i]!!.setTextColor(
-                    if (sel) color(R.color.background) else color(R.color.text_primary),
-                )
+                ancCards[i]?.background = ancCardBg(sel)
+                ancCards[i]?.isEnabled = isConnected
+                ancCards[i]?.alpha = if (isConnected) 1f else 0.45f
+                ancIcons[i]?.setColorFilter(if (sel) color(R.color.background) else color(R.color.text_primary))
+                ancLabels[i]?.setTextColor(color(R.color.text_primary))
             }
         }
     }
@@ -609,7 +1319,7 @@ class MainActivity :
     private fun ancCardBg(selected: Boolean): GradientDrawable {
         val d = GradientDrawable()
         d.setColor(if (selected) color(R.color.text_primary) else color(R.color.surface))
-        d.cornerRadius = 22.dp().toFloat()
+        d.cornerRadius = 18.dp().toFloat()
         return d
     }
 
@@ -668,8 +1378,6 @@ class MainActivity :
 
     private fun Int.dp(): Int = (this * resources.displayMetrics.density + 0.5f).toInt()
 
-    private fun Float.dp(): Int = (this * resources.displayMetrics.density + 0.5f).toInt()
-
     @Suppress("DEPRECATION")
     private fun color(resId: Int): Int = resources.getColor(resId, theme)
 
@@ -680,9 +1388,104 @@ class MainActivity :
             null
         } ?: BluetoothAdapter.getDefaultAdapter()
 
+    private fun reload() {
+        bondLost = false
+        isSynced = false
+        loadBattery()
+        updateStatus(false)
+        statusText.setText(R.string.status_connecting)
+        BudsManager.get(this).reload(this)
+    }
+
+    private fun showLogs() {
+        val text = TextView(this)
+        text.setTextSize(11f)
+        text.typeface = Typeface.MONOSPACE
+        text.setTextColor(color(R.color.text_primary))
+        text.setTextIsSelectable(true)
+        val pad = 16.dp()
+        text.setPadding(pad, pad, pad, pad)
+
+        val scroll = ScrollView(this)
+        scroll.addView(text)
+
+        val render = Runnable { text.text = BudsLog.snapshot() }
+        render.run()
+
+        val dialog =
+            AlertDialog
+                .Builder(this)
+                .setTitle(R.string.logs_title)
+                .setView(scroll)
+                .setPositiveButton(R.string.action_copy, null)
+                .setNeutralButton(R.string.action_clear, null)
+                .setNegativeButton(R.string.action_close, null)
+                .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                copyLogs(BudsLog.snapshot())
+            }
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                BudsLog.clear()
+                render.run()
+            }
+        }
+        dialog.setOnDismissListener { BudsLog.removeListener(render) }
+        BudsLog.addListener(render)
+        dialog.show()
+    }
+
+    private fun copyLogs(content: String) {
+        try {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(
+                ClipData.newPlainText(getString(R.string.logs_title), content),
+            )
+            Toast.makeText(this, R.string.logs_copied, Toast.LENGTH_SHORT).show()
+        } catch (e: Throwable) {
+        }
+    }
+
+    private fun openBluetoothSettings() {
+        try {
+            startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS))
+        } catch (e: Throwable) {
+        }
+    }
+
+    private fun showBondDialog() {
+        AlertDialog
+            .Builder(this)
+            .setTitle(R.string.status_bond_lost)
+            .setMessage(R.string.bond_help)
+            .setPositiveButton(R.string.action_repair) { _, _ -> repair() }
+            .setNeutralButton(R.string.action_settings) { _, _ -> openBluetoothSettings() }
+            .setNegativeButton(R.string.action_close, null)
+            .show()
+    }
+
+    private fun repair() {
+        bondLost = false
+        isSynced = false
+        loadBattery()
+        updateStatus(false)
+        statusText.setText(R.string.status_connecting)
+        BudsManager.get(this).forgetAndReload(this)
+    }
+
     companion object {
         private const val PERMISSION_REQUEST = 1
         private const val REQUEST_ENABLE_BT = 2
+        private const val CONFIG_POLL_MS = 5000L
+        private const val CONFIG_GROUP_POLL_EVERY = 3
+        private const val RING_TIMEOUT_MS = 60000L
+        private val ANC_DISPLAY_ORDER =
+            intArrayOf(
+                BudsProtocol.ANC_OFF,
+                BudsProtocol.ANC_TRANSPARENCY,
+                BudsProtocol.ANC_ADAPTIVE,
+                BudsProtocol.ANC_ANC,
+            )
         private val BT_PERMISSIONS: Array<String> =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 arrayOf(

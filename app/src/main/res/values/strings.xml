@@ -4,8 +4,14 @@
     <string name="app_title">Moto Buds+</string>
     <string name="status_connected">Connected</string>
     <string name="status_disconnected">Not connected</string>
-    <string name="status_connecting">Connecting</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_searching">Searching for buds…</string>
     <string name="status_no_device">No Moto Buds found</string>
+    <string name="status_bt_off">Bluetooth is off</string>
+    <string name="status_bond_lost">Bond lost — tap to re-pair</string>
+    <string name="bond_help">Android 16/17 keeps the old link key when the buds fail to authenticate, so the RFCOMM channel can\'t be encrypted. Forget the bond and let the phone pair the buds again.</string>
+    <string name="action_repair">Forget &amp; re-pair</string>
+    <string name="action_settings">Bluetooth settings</string>
     <string name="noise_control">Noise control</string>
     <string name="sound_by_bose">SOUND BY BOSE</string>
     <string name="battery_left">Left</string>
@@ -13,7 +19,12 @@
     <string name="battery_case">Case</string>
     <string name="anc_off">Off</string>
     <string name="anc_transparency">Transparency</string>
-    <string name="anc_anc">ANC</string>
+    <string name="anc_anc">Noise cancellation</string>
     <string name="anc_adaptive">Adaptive</string>
-    <string name="log">Log</string>
+    <string name="action_logs">Logs</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_clear">Clear</string>
+    <string name="action_close">Close</string>
+    <string name="logs_title">Bluetooth log</string>
+    <string name="logs_copied">Logs copied</string>
 </resources>

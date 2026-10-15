@@ -2,30 +2,30 @@ package com.arnavk09.motoanc
 
 import android.content.Context
 
-/**
- * Process-wide singleton that owns a single [BudsConnection] and fans its
- * callbacks out to every registered listener (the activity and the QS tile).
- */
 class BudsManager private constructor() : BudsConnection.Listener {
     private var connection: BudsConnection? = null
     private val listeners = ArrayList<BudsConnection.Listener>()
     private var targetAddress: String? = null
     private var connected = false
     private var currentAnc = BudsProtocol.ANC_OFF
+    private var lastStatus: String? = null
 
     fun addListener(listener: BudsConnection.Listener) {
         val already: Boolean
         val wasConnected: Boolean
         val mode: Int
+        val status: String?
         synchronized(this) {
             already = listeners.contains(listener)
             if (!already) listeners.add(listener)
             wasConnected = connected
             mode = currentAnc
+            status = lastStatus
         }
         if (already) return
         if (wasConnected) listener.onConnected()
         listener.onAncMode(mode)
+        status?.let { listener.onStatus(it) }
     }
 
     @Synchronized
@@ -46,9 +46,32 @@ class BudsManager private constructor() : BudsConnection.Listener {
     }
 
     @Synchronized
+    fun reload(context: Context) {
+        BudsLog.d("manager reload")
+        teardown()
+        start(context, DeviceFinder.find(context))
+    }
+
+    @Synchronized
+    fun forgetAndReload(context: Context) {
+        val address = targetAddress
+        BudsLog.d("manager forgetAndReload " + address)
+        connection?.forgetBond()
+        teardown()
+        start(context, address)
+    }
+
+    private fun teardown() {
+        connection?.stop()
+        connection = null
+        connected = false
+    }
+
+    @Synchronized
     fun stop(listener: BudsConnection.Listener) {
         removeListener(listener)
         if (listeners.isEmpty() && connection != null) {
+            BudsLog.d("manager stop: no listeners, tearing down")
             connection!!.stop()
             connection = null
         }
@@ -70,7 +93,39 @@ class BudsManager private constructor() : BudsConnection.Listener {
     }
 
     @Synchronized
-    fun isRunning(): Boolean = connection != null
+    fun queryConfigs() {
+        connection?.queryConfigs()
+    }
+
+    @Synchronized
+    fun setConfig(
+        key: String,
+        on: Boolean,
+    ) {
+        connection?.setConfig(key, on)
+    }
+
+    @Synchronized
+    fun setGesture(
+        side: Int,
+        index: Int,
+        action: Int,
+    ) {
+        connection?.setGesture(side, index, action)
+    }
+
+    @Synchronized
+    fun queryGestures() {
+        connection?.queryToggleConfigs()
+    }
+
+    @Synchronized
+    fun setRingBuds(
+        left: Boolean,
+        right: Boolean,
+    ) {
+        connection?.setRingBuds(left, right)
+    }
 
     override fun onConnected() {
         val snap: List<BudsConnection.Listener>
@@ -109,6 +164,46 @@ class BudsManager private constructor() : BudsConnection.Listener {
             snap = ArrayList(listeners)
         }
         for (l in snap) l.onAncMode(mode)
+    }
+
+    override fun onConfig(
+        key: String,
+        on: Boolean,
+    ) {
+        val snap: List<BudsConnection.Listener>
+        synchronized(this) {
+            snap = ArrayList(listeners)
+        }
+        for (l in snap) l.onConfig(key, on)
+    }
+
+    override fun onGesture(
+        side: Int,
+        index: Int,
+        action: Int,
+    ) {
+        val snap: List<BudsConnection.Listener>
+        synchronized(this) {
+            snap = ArrayList(listeners)
+        }
+        for (l in snap) l.onGesture(side, index, action)
+    }
+
+    override fun onStatus(text: String) {
+        val snap: List<BudsConnection.Listener>
+        synchronized(this) {
+            lastStatus = text
+            snap = ArrayList(listeners)
+        }
+        for (l in snap) l.onStatus(text)
+    }
+
+    override fun onBondLost() {
+        val snap: List<BudsConnection.Listener>
+        synchronized(this) {
+            snap = ArrayList(listeners)
+        }
+        for (l in snap) l.onBondLost()
     }
 
     companion object {

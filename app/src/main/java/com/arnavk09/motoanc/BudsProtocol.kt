@@ -9,7 +9,7 @@ class BudsProtocol {
     private var reassembly: MutableList<Byte> = ArrayList()
 
     @Synchronized
-    fun buildFrame(
+    fun buildInner(
         opcode: Int,
         payload: ByteArray,
     ): ByteArray {
@@ -27,8 +27,10 @@ class BudsProtocol {
         inner[6] = (s and 0xff).toByte()
         inner[7] = ((s shr 8) and 0xff).toByte()
         payload.copyInto(inner, 8)
-        return frame(inner)
+        return inner
     }
+
+    fun wrap(inner: ByteArray): ByteArray = frame(inner)
 
     @Synchronized
     fun unframe(chunk: ByteArray): List<ByteArray> {
@@ -98,6 +100,7 @@ class BudsProtocol {
     companion object {
         const val SERVICE_UUID = "fc9d9fe0-4899-11ee-be56-0242ac120002"
         const val SERVICE_UUID_OLD = "00009fe0-4899-11ee-be56-0242ac120002"
+        const val SPP_UUID = "00001101-0000-1000-8000-00805f9b34fb"
 
         private val HEAD = byteArrayOf(0x48, 0x45, 0x41, 0x44)
         private val TAIL = byteArrayOf(0x54, 0x41, 0x49, 0x4c)
@@ -113,7 +116,7 @@ class BudsProtocol {
         const val SET_ANC_MODE = 0x201
         const val SET_ADAPTATION_STATUS = 0x203
         const val ANC_MODE_CHANGED = 0x204
-        const val TOGGLE_CATEGORY_ANC_PREFERENCE = 0x01
+        const val SET_RING_BUDS = 0x405
 
         const val ANC_OFF = 0
         const val ANC_TRANSPARENCY = 1

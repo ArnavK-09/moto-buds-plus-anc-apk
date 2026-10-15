@@ -6,15 +6,26 @@
 </p>
 
 > [!NOTE]
-> A lightweight, vibe-coded Android app that talks directly to your **Moto Buds+** over Bluetooth RFCOMM. Toggle ANC modes and check battery levels for the left bud, right bud, and case — no official app needed, no background services running when you close it.
+> A lightweight, vibe-coded Android app that talks directly to your **Moto Buds+** over Bluetooth RFCOMM (with GATT fallback). Toggle ANC modes, configure gestures, ring a lost bud, and check battery levels for the left bud, right bud, and case — no official app needed, no background services running when you close it.
+>
+> **This app is vibe-coded.** The UI mirrors the official Moto Buds app and the RFCOMM protocol behaviour was reverse-engineered from the official APK. Treat it as a hobby project, not a supported product.
 
 ## 🌟 Features
 
-- **ANC Control** – Switch between Off, Transparency, ANC, and Adaptive modes.
-- **Battery Monitoring** – View battery percentage for left, right, and case.
-- **Live Sync** – Connects and syncs state as soon as you open the app.
+- **ANC Control** – Switch between Off, Transparency, Adaptive, and Noise cancellation, with the icon and label matching the official app.
+- **Gesture Configuration** – Remap double press, triple press, and long press independently for the left and right bud.
+- **Find My Buds** – Ring either earbud individually; stops automatically when you leave the page or after 60 seconds.
+- **Sound Settings** – Toggle Hi-Res mode, game mode, and volume boost.
+- **In-ear Detection & Dual Connection** – Manage both straight from the home screen.
+- **Battery Monitoring** – Circular battery gauges for left, right, and case, including charging state.
+- **Live Sync** – Connects and syncs state as soon as you open the app, then keeps polling so changes made elsewhere are picked up.
+- **Quick Settings Tile** – A toggleable QS tile that turns ANC on or off without opening the app, with its own icon and label per state.
 - **No Background Drain** – Stops all Bluetooth work when the app is closed or backgrounded.
 - **Minimal & Fast** – No feature bloat, just the controls you need.
+
+### Model support
+
+Tuned for **Moto Buds+ XT2441-1**. Features the model does not support (auto volume, case recording, bass enhancement) are left out of the UI rather than shown as broken toggles.
 
 ## 💻 Installation
 
@@ -50,9 +61,13 @@ npm run format:check  # verify
 
 > Here's the expected look of Moto Buds+ ANC
 
-| Home Screen                |
-| -------------------------- |
-| ![Demo](./screenshot.jpeg) |
+| Home                                  | Sound                                   |
+| ------------------------------------- | --------------------------------------- |
+| ![Home](./screenshots/home-page.jpeg) | ![Sound](./screenshots/sound-page.jpeg) |
+
+| Gestures                                      | Find                                       |
+| --------------------------------------------- | ------------------------------------------ |
+| ![Gestures](./screenshots/gestures-page.jpeg) | ![Find](./screenshots/find-buds-page.jpeg) |
 
 ---
 

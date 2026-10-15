@@ -4,50 +4,86 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.content.Context
-import android.os.ParcelUuid
 import java.util.UUID
 
-/**
- * Finds a bonded Moto Buds+ by name or by advertised RFCOMM service UUID.
- *
- * Runs on the UI thread, so it only consults cached state: no SDP refresh, no
- * sleeping. A refreshed-cache second pass lives in BudsConnection's connect
- * thread.
- */
 object DeviceFinder {
+    private val NAME_TOKENS =
+        arrayOf(
+            "moto buds",
+            "motobuds",
+            "moto bud",
+            "motobud",
+            "buds+",
+            "buds +",
+            "buds plus",
+        )
+
+    private val UUID_SERVICE = UUID.fromString(BudsProtocol.SERVICE_UUID)
+    private val UUID_SERVICE_OLD = UUID.fromString(BudsProtocol.SERVICE_UUID_OLD)
+    private val UUID_SPP = UUID.fromString(BudsProtocol.SPP_UUID)
+
     @JvmStatic
     fun find(context: Context): String? {
-        val adapter = btAdapter(context) ?: return null
-        try {
-            val bonded: Set<BluetoothDevice> = adapter.getBondedDevices() ?: return null
-            val spp = UUID.fromString(BudsProtocol.SERVICE_UUID)
-            val old = UUID.fromString(BudsProtocol.SERVICE_UUID_OLD)
-            for (d in bonded) {
-                val name = d.getName()
-                if (name != null) {
-                    val lower = name.lowercase()
-                    if (lower.contains("moto buds") || lower.contains("motobuds")) {
-                        return d.getAddress()
-                    }
-                }
-                val uuids: Array<ParcelUuid>? = d.getUuids()
-                if (uuids != null) {
-                    for (u in uuids) {
-                        if (u != null && (spp == u.getUuid() || old == u.getUuid())) {
-                            return d.getAddress()
-                        }
-                    }
-                }
-            }
-        } catch (ignored: Throwable) {
+        for (device in list(context)) {
+            if (matches(device)) return device.address
         }
         return null
     }
 
-    /**
-     * BluetoothAdapter.getDefaultAdapter() is the deprecated legacy entry point
-     * and the first thing a new OS stop resolving; prefer BluetoothManager.
-     */
+    @JvmStatic
+    fun list(context: Context): List<BluetoothDevice> {
+        val adapter = btAdapter(context) ?: return emptyList()
+        return try {
+            adapter.bondedDevices?.toList() ?: emptyList()
+        } catch (e: Throwable) {
+            emptyList()
+        }
+    }
+
+    @JvmStatic
+    fun matches(device: BluetoothDevice?): Boolean {
+        if (device == null) return false
+        if (isBudsName(safeName(device))) return true
+        val uuids =
+            try {
+                device.uuids
+            } catch (e: Throwable) {
+                null
+            } ?: return false
+        for (parcel in uuids) {
+            if (parcel == null) continue
+            val id = parcel.uuid
+            if (id == UUID_SERVICE || id == UUID_SERVICE_OLD || id == UUID_SPP) return true
+        }
+        return false
+    }
+
+    @JvmStatic
+    fun isBudsName(name: String?): Boolean {
+        if (name == null) return false
+        val lower = name.lowercase()
+        for (token in NAME_TOKENS) {
+            if (lower.contains(token)) return true
+        }
+        return false
+    }
+
+    @JvmStatic
+    fun safeName(device: BluetoothDevice): String? =
+        try {
+            device.name
+        } catch (e: Throwable) {
+            null
+        }
+
+    @JvmStatic
+    fun safeAddress(device: BluetoothDevice): String? =
+        try {
+            device.address
+        } catch (e: Throwable) {
+            null
+        }
+
     private fun btAdapter(context: Context): BluetoothAdapter? =
         try {
             (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter

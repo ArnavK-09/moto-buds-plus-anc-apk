@@ -7,16 +7,17 @@ import android.os.Looper
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 
-/** Quick Settings tile that toggles ANC on/off, reusing the shared connection. */
 class AncTileService :
     TileService(),
     BudsConnection.Listener {
     private lateinit var prefs: SharedPreferences
     private val handler = Handler(Looper.getMainLooper())
-    private val clickTimeout = Runnable { stopSelfConnection() }
+    private val clickTimeout = Runnable { finishClick() }
+    private val stopTimeout = Runnable { BudsManager.get(this).stop(this) }
     private var clickPending = false
     private var currentAnc = BudsProtocol.ANC_OFF
     private var isConnected = false
+    private var bondLost = false
 
     override fun onCreate() {
         super.onCreate()
@@ -26,6 +27,7 @@ class AncTileService :
 
     override fun onStartListening() {
         super.onStartListening()
+        handler.removeCallbacks(stopTimeout)
         updateTile()
         BudsManager.get(this).addListener(this)
         BudsManager.get(this).start(this, DeviceFinder.find(this))
@@ -33,21 +35,24 @@ class AncTileService :
 
     override fun onStopListening() {
         super.onStopListening()
-        BudsManager.get(this).stop(this)
-        handler.removeCallbacks(clickTimeout)
+        handler.removeCallbacks(stopTimeout)
+        handler.postDelayed(stopTimeout, STOP_DELAY_MS)
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        BudsManager.get(this).stop(this)
+        handler.removeCallbacks(stopTimeout)
         handler.removeCallbacks(clickTimeout)
+        BudsManager.get(this).stop(this)
     }
 
     override fun onClick() {
         super.onClick()
         if (clickPending) return
         clickPending = true
+        handler.removeCallbacks(clickTimeout)
         handler.postDelayed(clickTimeout, CLICK_TIMEOUT_MS)
+        handler.removeCallbacks(stopTimeout)
         BudsManager.get(this).addListener(this)
         BudsManager.get(this).start(this, DeviceFinder.find(this))
         maybeSendToggle()
@@ -65,6 +70,7 @@ class AncTileService :
 
     override fun onConnected() {
         isConnected = true
+        bondLost = false
         updateTile()
         BudsManager.get(this).queryAnc()
         maybeSendToggle()
@@ -89,14 +95,31 @@ class AncTileService :
         updateTile()
     }
 
+    override fun onConfig(
+        key: String,
+        on: Boolean,
+    ) {
+    }
+
+    override fun onGesture(
+        side: Int,
+        index: Int,
+        action: Int,
+    ) {
+    }
+
+    override fun onStatus(text: String) {
+    }
+
+    override fun onBondLost() {
+        bondLost = true
+        finishClick()
+        updateTile()
+    }
+
     private fun finishClick() {
         clickPending = false
         handler.removeCallbacks(clickTimeout)
-    }
-
-    private fun stopSelfConnection() {
-        finishClick()
-        BudsManager.get(this).stop(this)
     }
 
     @Suppress("DEPRECATION")
@@ -105,7 +128,10 @@ class AncTileService :
 
         var state = if (isConnected) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         val subtitle: String
-        if (!isConnected) {
+        if (bondLost) {
+            subtitle = "Re-pair"
+            state = Tile.STATE_INACTIVE
+        } else if (!isConnected) {
             subtitle = "Disconnected"
             state = Tile.STATE_INACTIVE
         } else if (currentAnc == BudsProtocol.ANC_OFF) {
@@ -125,11 +151,23 @@ class AncTileService :
         tile.setState(state)
         tile.setLabel("Moto Buds+")
         tile.setSubtitle(subtitle)
-        tile.setIcon(Icon.createWithResource(this, R.drawable.ic_anc_on))
+        val iconRes =
+            if (!isConnected || bondLost) {
+                R.drawable.ic_anc_off
+            } else {
+                when (currentAnc) {
+                    BudsProtocol.ANC_TRANSPARENCY -> R.drawable.ic_transparency
+                    BudsProtocol.ANC_ADAPTIVE -> R.drawable.ic_adaptive
+                    BudsProtocol.ANC_ANC -> R.drawable.ic_anc_on
+                    else -> R.drawable.ic_anc_off
+                }
+            }
+        tile.setIcon(Icon.createWithResource(this, iconRes))
         tile.updateTile()
     }
 
     companion object {
-        private const val CLICK_TIMEOUT_MS = 8000L
+        private const val CLICK_TIMEOUT_MS = 15000L
+        private const val STOP_DELAY_MS = 30000L
     }
 }
