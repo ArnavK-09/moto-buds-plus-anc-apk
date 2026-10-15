@@ -52,9 +52,9 @@ Kotlin sources are formatted with [ktlint](https://pinterest.github.io/ktlint/)
 and everything else with Prettier:
 
 ```bash
-npm install
-npm run format        # apply
-npm run format:check  # verify
+bun install
+bun run format        # apply
+bun run format:check  # verify
 ```
 
 ## 📷 Screenshots
