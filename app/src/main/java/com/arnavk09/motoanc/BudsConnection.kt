@@ -49,6 +49,8 @@ class BudsConnection(
             action: Int,
         )
 
+        fun onDualDevices(raw: ByteArray)
+
         fun onStatus(text: String)
 
         fun onBondLost()
@@ -797,6 +799,13 @@ class BudsConnection(
                 }
             }
 
+            BudsProtocol.GET_DUAL_CONNECTION_DEVICE,
+            BudsProtocol.DUAL_CONNECTION_DEVICE_CHANGED,
+            -> {
+                log("dual devices raw: " + p.joinToString(" ") { "%02x".format(it) })
+                mainHandler.post { listener?.onDualDevices(p) }
+            }
+
             else -> {
                 val feature = BudsConfig.forResponse(pkt.opcode)
                 if (feature != null && p.isNotEmpty()) {
@@ -861,6 +870,10 @@ class BudsConnection(
         enqueue(BudsProtocol.GET_ANC_MODE, ByteArray(0))
     }
 
+    fun queryDualDevices() {
+        enqueue(BudsProtocol.GET_DUAL_CONNECTION_DEVICE, ByteArray(0))
+    }
+
     fun queryToggleConfigs() {
         enqueue(BudsProtocol.GET_TOGGLE_CONFIGS, ByteArray(0))
     }
@@ -914,6 +927,7 @@ class BudsConnection(
                 BudsProtocol.GET_BATTERY_LEVEL -> queryBattery()
                 BudsProtocol.GET_ANC_MODE -> queryAnc()
                 BudsProtocol.GET_TOGGLE_CONFIGS -> queryToggleConfigs()
+                BudsProtocol.GET_DUAL_CONNECTION_DEVICE -> queryDualDevices()
             }
             sleep(250)
         }

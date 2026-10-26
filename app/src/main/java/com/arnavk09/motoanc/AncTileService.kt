@@ -108,6 +108,9 @@ class AncTileService :
     ) {
     }
 
+    override fun onDualDevices(raw: ByteArray) {
+    }
+
     override fun onStatus(text: String) {
     }
 

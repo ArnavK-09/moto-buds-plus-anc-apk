@@ -50,6 +50,8 @@ class MainActivity :
 
     private val ancCards = arrayOfNulls<LinearLayout>(4)
     private val ancIcons = arrayOfNulls<ImageView>(4)
+    private var dualDevicesLabel: TextView? = null
+    private var dualDevicesText: TextView? = null
     private val ancLabels = arrayOfNulls<TextView>(4)
     private val configState = HashMap<String, Boolean>()
     private val configKnown = HashSet<String>()
@@ -339,6 +341,12 @@ class MainActivity :
         updateAnc()
     }
 
+    override fun onDualDevices(raw: ByteArray) {
+        runOnUiThread {
+            dualDevicesText?.text = raw.joinToString(" ") { "%02x".format(it) }
+        }
+    }
+
     override fun onConfig(
         key: String,
         on: Boolean,
@@ -400,6 +408,18 @@ class MainActivity :
             if (index != connectedKeys.lastIndex) settings.addView(divider())
         }
         section.addView(settings, marginBottom(20.dp()))
+        dualDevicesLabel = TextView(this)
+        dualDevicesLabel!!.text = "Connected devices (raw)"
+        dualDevicesLabel!!.setTextColor(color(R.color.text_secondary))
+        dualDevicesLabel!!.setTextSize(12f)
+        dualDevicesLabel!!.layoutParams = marginBottom(4.dp())
+        section.addView(dualDevicesLabel)
+        dualDevicesText = TextView(this)
+        dualDevicesText!!.text = "—"
+        dualDevicesText!!.setTextColor(color(R.color.text_primary))
+        dualDevicesText!!.setTextSize(12f)
+        dualDevicesText!!.typeface = Typeface.MONOSPACE
+        section.addView(dualDevicesText, marginBottom(20.dp()))
         return section
     }
 

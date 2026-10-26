@@ -189,6 +189,14 @@ class BudsManager private constructor() : BudsConnection.Listener {
         for (l in snap) l.onGesture(side, index, action)
     }
 
+    override fun onDualDevices(raw: ByteArray) {
+        val snap: List<BudsConnection.Listener>
+        synchronized(this) {
+            snap = ArrayList(listeners)
+        }
+        for (l in snap) l.onDualDevices(raw)
+    }
+
     override fun onStatus(text: String) {
         val snap: List<BudsConnection.Listener>
         synchronized(this) {

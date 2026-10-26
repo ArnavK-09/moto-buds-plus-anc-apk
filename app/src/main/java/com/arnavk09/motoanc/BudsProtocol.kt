@@ -117,6 +117,8 @@ class BudsProtocol {
         const val SET_ADAPTATION_STATUS = 0x203
         const val ANC_MODE_CHANGED = 0x204
         const val SET_RING_BUDS = 0x405
+        const val GET_DUAL_CONNECTION_DEVICE = 0x408
+        const val DUAL_CONNECTION_DEVICE_CHANGED = 0x409
 
         const val ANC_OFF = 0
         const val ANC_TRANSPARENCY = 1
